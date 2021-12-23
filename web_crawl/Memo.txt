@@ -1,0 +1,142 @@
+1. Request模块的操作
+
+    -导入模块
+
+    import requests
+    from requests.auth import HTTPBasicAuth   # 认证
+
+
+    -requests.get/post 操作中常用的参数
+    #headers 参数，用UA伪装
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36'}
+
+    #get/post 操作的参数，一般是url中?后面的部分
+    param = {
+        'action': 'get',
+        'type': 'atc_status'
+    }
+
+    #data部分，post操作必要参数
+    data = {
+        'cname': '上海',
+        'pid': '',
+        'pageIndex': '1',
+        'pageSize': '10'
+    }
+
+    #auth参数，用来登录验证
+
+    #proxies参数，用来设置代理
+
+    -requests 命令实例
+
+    response = requests.get(url,headers=headers,timeout=5,verify=False,proxies={'https': '10.158.100.9:8080'})
+    response = requests.get(url,headers=headers,timeout=5,verify=False,proxies={'https': '10.158.100.9:8080'},auth=('jieminbz','Jim#2345'))
+    response = requests.post(url=url, headers=headers, data=data, params=param)
+    response = requests.get(url=url,headers=headers)
+
+
+    -response 常用的操作
+
+    response.enconding     #response的编码格式，也可以通过response.enconding= xxx 来设置
+    response.text          #字符串形式返回
+    response.content       #二进制形式返回
+    response.json()        #json字符串形式返回
+    response.status_code   #状态码
+    response.enconding = response.apparent_encoding         # 从html的返回来猜测编码
+
+
+2. url含义简介
+
+    1. 协议部分: http
+    2. 域名部分: smartlab-service.int.net.nokia.com
+    3. 端口部分: 域名后如果有冒号，则冒号后面是端口
+    4. 虚拟目录部分: 域名后的第一个'/'开始知道最后一个'/'为止，本例中为/job/CHERLAB_VSRMA_SRNTB_NGVR_weekly_38.55/41/
+    5. 文件名部分: 域名后最后一个'/'开始直到'?'为止；如果没有'?'则是到'#'为止，如果两者都没有，那么就是从最后一个'/'直到结束
+       如果该部分省略，会使用默认的文件名
+    6. 锚部分: 从"#"开始直到最后
+    7. 参数部分: 从'?'开始到'#'之间的部分，又称搜索部分，查询部分。可以有多个，用'&'连接
+
+
+3. beautifulsoup模块的操作
+
+    -导入模块
+
+    from bs4 import BeautifulSoup
+
+    -操作流程
+
+    soup = BeautifulSoup(response_text,'lxml')  #实例化一个bs4 对象，第一个参数是requests.get().text，第二个参数指定解析器，需要先安装lxml模块
+
+
+    -常用的方法
+    soup.tagName                                    #返回html中第一次出现的tagName 标签
+    soup.find('div')                                #返回第一个div 标签，等同于soup.div
+    soup.find_all() 用法
+        find_all(name, attrs, recursive, string, limit, **kwargs)  # 详见https://www.crummy.com/software/BeautifulSoup/bs4/doc/#find-all
+        
+        soup.find_all("title")      #所有name为'title'标签
+        # [<title>The Dormouse's story</title>]
+        
+        soup.find_all("p", "title")     #所有name为"p", 属性为"title" 的标签
+        # [<p class="title"><b>The Dormouse's story</b></p>]
+        上述语句等同于soup.find_all("p", class_="title")
+
+        soup.find_all(id="link2")       #id=2的标签
+        # [<a class="sister" href="http://example.com/lacie" id="link2">Lacie</a>]
+
+        soup.find_all(href=re.compile("elsie"))     #href属性match正则匹配的标签
+        # [<a class="sister" href="http://example.com/elsie" id="link1">Elsie</a>]
+
+        soup.find_all("a", string="Elsie")          #string为"Elsie" 的a 标签
+        # [<a href="http://example.com/elsie" class="sister" id="link1">Elsie</a>]
+
+        soup.find_all("a", limit=2)                 #返回2个a标签
+        # [<a class="sister" href="http://example.com/elsie" id="link1">Elsie</a>,
+        #  <a class="sister" href="http://example.com/lacie" id="link2">Lacie</a>]
+
+        soup.find_all('span', id='reporter-val',class_="view-issue-field")      #多个条件组合
+
+    soup.select()的用法
+
+        soup.select('.className')       #通过类查找
+        soup.select('#idName')          #通过id名称查找
+        soup.select('tagName')          #通过标签名查找
+        soup.select('.tang > ul > li > a')      #层级查找，class名为tang的, ul 下 的 li 下的 a标签
+
+    soup.a.string               #获取a标签下的文本
+    soup.a.text/get_text()      #获取a标签下的所有文本
+    soup.a['href']              #获取a标签下的href属性
+
+4. xpath
+
+    -导入模块
+
+    from lxml import etree
+
+    -操作流程
+
+    实例化etree对象
+
+        parser = etree.HTMLParser(encoding='utf-8')         #使用特定的parser，避免由于html不完整报错
+        tree = etree.HTML(page_text,parser=parser)          #加载从网上爬取的html 源码
+        tree = etree.parse(file_paty,parser=parser)         #加载一个本地html
+      
+
+    -xpath 表达式相关
+
+        /                    从根节点开始定位，表示一个层级
+        //                   表示多个层级，可以从任何位置开始
+        ./                   从当前的节点处开始，用于局部解析
+                             td_context = td_tag.xpath('.//text()')  #td_tag 一个tag element
+        属性定位              //div[@class='song']     class属性为song的div标签
+        索引定位              //div[@class='song']/p[3]    class属性为song的div标签下的第3个p标签，注意索引从1开始
+        获取文本
+                             /text()       获取标签中直系的文本内容
+                             //text()      获取标签中非直系文本内容（所有内容）
+        获取属性             img/@src       img标签下的src属性
+
+
+
+
+
