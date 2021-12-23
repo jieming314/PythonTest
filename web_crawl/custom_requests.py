@@ -3,7 +3,7 @@ import os
 
 def requests_get(**kw):
     #公司pc连接外网需要代理
-    if 'USER' in os.environ and os.environ['USER'] == 'jmzhang':
+    if 'USERNAME' in os.environ and os.environ['USERNAME'] == 'jmzhang':
         response = requests.get(**kw)
     else:
         response = requests.get(proxies={'https': '10.158.100.9:8080','http': '10.158.100.9:8080'},**kw)
@@ -11,7 +11,7 @@ def requests_get(**kw):
 
 def requests_post(**kw):
     #公司pc连接外网需要代理
-    if 'USER' in os.environ and os.environ['USER'] == 'jmzhang':
+    if 'USERNAME' in os.environ and os.environ['USERNAME'] == 'jmzhang':
         response = requests.post(**kw)
     else:
         response = requests.post(proxies={'https': '10.158.100.9:8080','http': '10.158.100.9:8080'},**kw)
