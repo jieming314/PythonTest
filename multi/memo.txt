@@ -1,0 +1,58 @@
+
+1. 多进程multiprocess
+
+参考自： https://docs.python.org/3/library/multiprocessing.html
+
+    -导入模块
+
+    from multiprocessing import Process
+
+    -Process 类简介
+
+        class multiprocessing.Process(group=None, target=None, name=None, args=(), kwargs={}, *, daemon=None)
+
+        1. 调用Process时永远使用关键字参数
+        2. group 参数永远为None
+        3. target参数值为可执行的对象，例如函数，会被run()方法调用
+        4. name为进程名
+        5. args 为一个参数tuple，传给target
+        6. kwargs 为一个参数字典，传给target
+        7. daemon 为一个flag，表示是否为守护进程
+
+
+        Process类的方法和属性
+
+        - start()
+        启动进程，每个进程仅能启动一次
+
+        - join()
+        用来阻塞主进程直到调用join的进程结束后才继续执行，一般来说有多少个start就有多少个join
+
+        p_list = []
+        for i in range(5):
+            p = Process(target=xxx,args=(xxx,))
+            p_list.append(p)
+            p.start()
+        for p in p_list:
+            p.join()
+
+        p_list中存放的是process实例，例如：
+        [<Process name='Process-1' pid=8764 parent=11336 started>, <Process name='Process-2' pid=3316 parent=11336 started>,  ......]
+
+        - name #进程名，没有实际作用
+
+        - is_alive()    #进程是否alive，一般来说进程从start()后开始alive直到结束
+
+        - daemon    #布尔值，必须在start()前设置；当一个进程退出时，会试图终结它的所有的守护进程
+
+        - pid       #返回进程id
+
+        - terminate()       #终结进程，注意：此方法不会一起终结进程的子进程，那些子进程会变成orphaned状态
+
+        - close()       #关闭进程，释放资源
+
+
+
+
+
+
