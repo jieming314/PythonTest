@@ -6,6 +6,7 @@
     -导入模块
 
     from multiprocessing import Process
+    from multiprocessing import Pool
 
     -Process 类简介
 
@@ -50,6 +51,50 @@
         - terminate()       #终结进程，注意：此方法不会一起终结进程的子进程，那些子进程会变成orphaned状态
 
         - close()       #关闭进程，释放资源
+
+    -Pool 类简介
+
+        class multiprocessing.pool.Pool([processes[, initializer[, initargs[, maxtasksperchild[, context]]]]])¶
+
+        一般来说，创建Pool实例时，只要给第一个参数，默认取os.cpu_count()
+
+        方法和属性
+
+        -apply(func[, args[, kwds]])    #向pool中添加func，阻塞主进程，不推荐使用
+
+        -apply_async(func[, args[, kwds[, callback[, error_callback]]]]) 
+        向pool中添加func，不阻塞主进程，可以返回结果
+
+        -map(func, iterable[, chunksize]) #向pool中添加func并执行，会阻塞主进程知道所有子进程都完成
+
+        -map_async(func, iterable[, chunksize[, callback[, error_callback]]])
+        类似于map，不过不会阻塞主进程，可以返回结果
+
+        -starmap(func, iterable[, chunksize])
+        类似map，不过传参方式有所不同，an iterable of [(1,2), (3, 4)] results in [func(1,2), func(3,4)]
+        还未尝试过
+
+        -starmap_async(func, iterable[, chunksize[, callback[, error_callback]]])
+        starmap 和 map_async 的组合，还未尝试
+
+        -close()    #结束向pool中再添加子进程
+
+        -terminate()    #停止pool中的子程序 ？？
+
+        -join()     #等待所有子进程结束，必须先使用close()或terminate() 后才能调用join()
+
+    -asyncio模块    #单线程+异步协程
+
+        
+
+
+
+
+
+
+
+
+
 
 
 
