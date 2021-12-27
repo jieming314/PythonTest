@@ -41,9 +41,16 @@
     response.enconding     #response的编码格式，也可以通过response.enconding= xxx 来设置
     response.text          #字符串形式返回
     response.content       #二进制形式返回
-    response.json()        #json字符串形式返回
+    response.json()        #json字符串形式返回，类型是字典或者列表
     response.status_code   #状态码
     response.enconding = response.apparent_encoding         # 从html的返回来猜测编码
+
+    -创建session        session可以携带cookie，让服务器记住登录的状态
+
+    session = requests.Session()
+    response = session.get()        #使用和requests.get() 相同
+    response = session.post()       #使用和requests.post() 相同
+
 
 
 2. url含义简介

@@ -17,6 +17,20 @@ def requests_post(**kw):
         response = requests.post(proxies={'https': '10.158.100.9:8080','http': '10.158.100.9:8080'},**kw)
     return response
 
+def session_get(session,**kw):
+    if 'USERNAME' in os.environ and os.environ['USERNAME'] == 'jmzhang':
+        response = session.get(**kw)
+    else:
+        response = session.get(proxies={'https': '10.158.100.9:8080','http': '10.158.100.9:8080'},**kw)
+    return response
+
+def session_post(session,**kw):
+    if 'USERNAME' in os.environ and os.environ['USERNAME'] == 'jmzhang':
+        response = session.post(**kw)
+    else:
+        response = session.post(proxies={'https': '10.158.100.9:8080','http': '10.158.100.9:8080'},**kw)
+    return response
+
 
 if __name__ == '__main__':
 
