@@ -1,0 +1,103 @@
+
+1. 多进程multiprocess
+
+参考自： https://docs.python.org/3/library/multiprocessing.html
+
+    -导入模块
+
+    from multiprocessing import Process
+    from multiprocessing import Pool
+
+    -Process 类简介
+
+        class multiprocessing.Process(group=None, target=None, name=None, args=(), kwargs={}, *, daemon=None)
+
+        1. 调用Process时永远使用关键字参数
+        2. group 参数永远为None
+        3. target参数值为可执行的对象，例如函数，会被run()方法调用
+        4. name为进程名
+        5. args 为一个参数tuple，传给target
+        6. kwargs 为一个参数字典，传给target
+        7. daemon 为一个flag，表示是否为守护进程
+
+
+        Process类的方法和属性
+
+        - start()
+        启动进程，每个进程仅能启动一次
+
+        - join()
+        用来阻塞主进程直到调用join的进程结束后才继续执行，一般来说有多少个start就有多少个join
+
+        p_list = []
+        for i in range(5):
+            p = Process(target=xxx,args=(xxx,))
+            p_list.append(p)
+            p.start()
+        for p in p_list:
+            p.join()
+
+        p_list中存放的是process实例，例如：
+        [<Process name='Process-1' pid=8764 parent=11336 started>, <Process name='Process-2' pid=3316 parent=11336 started>,  ......]
+
+        - name #进程名，没有实际作用
+
+        - is_alive()    #进程是否alive，一般来说进程从start()后开始alive直到结束
+
+        - daemon    #布尔值，必须在start()前设置；当一个进程退出时，会试图终结它的所有的守护进程
+
+        - pid       #返回进程id
+
+        - terminate()       #终结进程，注意：此方法不会一起终结进程的子进程，那些子进程会变成orphaned状态
+
+        - close()       #关闭进程，释放资源
+
+    -Pool 类简介
+
+        class multiprocessing.pool.Pool([processes[, initializer[, initargs[, maxtasksperchild[, context]]]]])¶
+
+        一般来说，创建Pool实例时，只要给第一个参数，默认取os.cpu_count()
+
+        方法和属性
+
+        -apply(func[, args[, kwds]])    #向pool中添加func，阻塞主进程，不推荐使用
+
+        -apply_async(func[, args[, kwds[, callback[, error_callback]]]]) 
+        向pool中添加func，不阻塞主进程，可以返回结果
+
+        -map(func, iterable[, chunksize]) #向pool中添加func并执行，会阻塞主进程知道所有子进程都完成
+
+        -map_async(func, iterable[, chunksize[, callback[, error_callback]]])
+        类似于map，不过不会阻塞主进程，可以返回结果
+
+        -starmap(func, iterable[, chunksize])
+        类似map，不过传参方式有所不同，an iterable of [(1,2), (3, 4)] results in [func(1,2), func(3,4)]
+        还未尝试过
+
+        -starmap_async(func, iterable[, chunksize[, callback[, error_callback]]])
+        starmap 和 map_async 的组合，还未尝试
+
+        -close()    #结束向pool中再添加子进程
+
+        -terminate()    #停止pool中的子程序 ？？
+
+        -join()     #等待所有子进程结束，必须先使用close()或terminate() 后才能调用join()
+
+    -asyncio模块    #单线程+异步协程
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
