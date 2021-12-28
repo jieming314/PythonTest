@@ -1,4 +1,5 @@
 import logging
+from numpy.core.arrayprint import IntegerFormat
 import requests
 import os
 import urllib3
@@ -10,9 +11,20 @@ import datetime
 
 '''
 自动填写TI
+还需要安装 xlsxwriter 和 openpyxl
 '''
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36'}
+
+#below lists store TI info will be added to excel
+ATC_NAME_LIST = []
+FAIL_STEP_LIST = []
+ERROR_INFO_LIST = []
+FR_ID_LIST = []
+FR_TYPE_LIST =[]
+JOB_NAME_LIST= []
+LAST_UPDATE_LIST = []
+
 
 def login_sls(username, password):
     '''
@@ -48,7 +60,7 @@ def login_sls(username, password):
     # print(data)
     # 发送第二个post请求，用来登录
     response = session_post(session,url=url_login,headers=HEADERS,data=data,timeout=5,verify=False)
-    print(response.status_code)
+    print('login sls response:', response.status_code)
 
     return session
 
@@ -60,7 +72,7 @@ def get_batch_ti_page(session,batch_name):
     url_search_batch = 'https://smartlab-service.int.net.nokia.com/server_processing/'
 
     data = {
-        'draw': '10',
+        'draw': '1',
         'start': '0',
         'length': '10',
         'order_clumn': '0',
@@ -70,7 +82,7 @@ def get_batch_ti_page(session,batch_name):
         'product': '',
         'release': '',
         'build': '',
-        'status': '',
+        'status': 'C',
         'requestor': '',
         'mark': '',
         'jobNum': '',
@@ -84,9 +96,12 @@ def get_batch_ti_page(session,batch_name):
 
     #获取第一个匹配batch name的batch 信息
     response = session_post(session,url=url_search_batch,headers=HEADERS,data=data,timeout=5,verify=False)
-    print(response.status_code)
+    print('get all batch result response: ', response.status_code)
 
     batch_result_dict = response.json()['data'][0]
+
+    print(batch_result_dict)
+
     job_num = batch_result_dict.get('jobNum')
     job_coverage = batch_result_dict.get('Coverage')
     job_buildID = batch_result_dict.get('BuildID')
@@ -101,102 +116,179 @@ def get_batch_ti_page(session,batch_name):
 
     #获取batch的TI 列表
     response = session_get(session,url=url_ti_page,headers=HEADERS,params=params,timeout=5,verify=False)
-    print(response.status_code)
+    print('detail ti page response: ', response.status_code)
 
     #获取所有的ti
-    ti_list = eval(response.text)['data']
-    print(ti_list[0])
-    # print(len(ti_list))
+    response_text = response.text.replace('null','" "')
+    ti_list = eval(response_text)['data']
+    print('all ti number: ', len(ti_list))
+    # print(ti_list[0])
     # print(ti_list[0].keys())
 
-    return ti_list
+    return job_num, ti_list
 
-def auto_ti(session, ti_list):
+def update_ti_info(session, ti_list):
     '''
-    填写已知TI
     脚本会打开本地一个记录已知TI的excel，根据case name，fail step 和 error message进行匹配
-    如果匹配成功，则自动填写TI
+    此函数会更新这个excel文件并return一个需要自动填写的ti列表
     '''
-    
-    excel_name = 'auto_ti.xlsx'
+
+    excel_name = 'auto_ti_%s.xlsx' % username
     sheet_name = 'bug list'
+    ti_list_to_submit = []
 
     if os.path.exists(excel_name):
         '''
         如果excel文件存在，更新并填写已知TI
         '''
-        df = pd.read_excel(excel_name,sheet_name=sheet_name)
+        df = pd.read_excel(excel_name,sheet_name=sheet_name,engine='openpyxl')
+        df.fillna(value='')
 
         for ti in ti_list:
-            #已经填好的TI，尝试更新excel
-            #如果找到相同的case名，失败步骤和error info，更新之；如果找不到，添加到末尾
-            if ti['frId']['value'] and ti['frClassify']:
-                atc_name = ti['ATCName']
-                fail_step = ti['failStep']
-                error_info = ti['errorInfo']
-                if df.query('ATC_Name == atc_name and Fail_Step == fail_step and Error_Info == error_info'):
-                    pass
+            '''
+            先判断一个TI是否已经被分析过(看fr id 和 fr type是否有值)
+                如果是已知TI，匹配case名，失败步骤和error info，
+                    如果匹配到了，更新FR_ID,FR_Type, Job_Name和Last_Update
+                    如果匹配不到，把此TI添加到excel末尾
+                如果TI还未被分析过，匹配case名，失败步骤和error info
+                    如果匹配到了，记录下此TI，需要使用post请求填写的
+                    如果匹配不到，跳过
+            '''
+            atc_name = ti['ATCName']
+            fail_step = ti['failStep']
+            error_info = ti['errorInfo']
+            fr_id = ti['frId']['value']
+            fr_type = ti['frClassify']
+            job_name = ti['jobName']
+            atc_id = ti['id']
+
+            match_flag = any( (df['ATC_Name'] == atc_name) & (df['Fail_Step'] == fail_step) & (df['Error_Info'] == error_info))
+            #已填TI
+            if fr_id and fr_type:
+                #查找excel里是否有满足添加的行（能match上的TI），有的话更新之，没有的话，添加之
+                if match_flag:
+                    '''
+                    这里还是有问题，应该更新满足上述条件的row
+                    '''
+                    print('Filled TI: ',atc_name, ' found in excel!')
+                    index_id = df.loc[(df['ATC_Name'] == atc_name) & (df['Fail_Step'] == fail_step) & (df['Error_Info'] == error_info),:].index.tolist()[0]
+                    print(index_id)
+                    df.loc[index_id,'FR_ID'] = fr_id
+                    df.loc[index_id,'FR_Type'] = fr_type
+                    df.loc[index_id,'Job_Name'] = job_name
+                    df.loc[index_id,'Last_Update'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 else:
-                    pass
-
-
-                df.loc[df.ATC_Name == atc_name,'Fail_Step'] = ti['failStep']
-            #未填TI，在excel中查找，如果能match就自动填上
+                    print('Filled TI: ',atc_name, 'not found in excel!')
+                    _add_ti_to_df_list(ti)
+            #未填TI，在excel中查找，如果能match就自动填上，match不到就跳过
             else:
-                pass
+                if match_flag:
+                    print('Unfilled TI: ',atc_name, ' found in excel!')
+                    #如果在excel中match到，记录下此TI，需要自动提交
+                    index_id = df.loc[(df['ATC_Name'] == atc_name) & (df['Fail_Step'] == fail_step) & (df['Error_Info'] == error_info),:].index.tolist()[0]
+                    fr_type = df.loc[index_id,'FR_Type']
+                    fr_id = df.loc[index_id,'FR_ID']
+                    ti_author = ti['user']
+                    submit_ti = {"id":atc_id,"frId":fr_id,"frClassify":fr_type,"frNewOrOld":"Old","frDesc":"","shortname":ti_author}
+                    ti_list_to_submit.append(submit_ti)
+                else:
+                    # print('Unfilled TI: ',atc_name, 'not found in excel!')
+                    pass
+        
+        #往原来的df尾部添加数据
+        d = {
+            'ATC_Name': ATC_NAME_LIST,
+            'Fail_Step': FAIL_STEP_LIST,
+            'Error_Info': ERROR_INFO_LIST,
+            'FR_ID': FR_ID_LIST,
+            'FR_Type': FR_TYPE_LIST,
+            'Job_Name': JOB_NAME_LIST,
+            'Last_Update': LAST_UPDATE_LIST
+        }
 
+        df2 = pd.DataFrame(data=d)
+        df = df.append(df2,ignore_index=True)
+        # print(df)
 
+        #更新本地的excel文件
+        _write_df_data_to_excel(df,excel_name=excel_name,sheet_name=sheet_name)
+
+        return ti_list_to_submit
 
     else:
         '''
         如果excel不存在，创建这个文件，并把本次的所有已知TI填进去
         '''
-        atc_name_list = []
-        fail_step_list = []
-        error_info_list = []
-        fr_id_list = []
-        fr_type_list =[]
-        job_name_list = []
-        last_update_list = []
-
         for ti in ti_list:
-            if ti['frId']['value'] and ti['frClassify']:
-                atc_name_list.append(ti['ATCName'])
-                fail_step_list.append(ti['failStep'])
-                error_info_list.append(ti['errorInfo'])
-                fr_id_list.append(ti['frId']['value'])
-                fr_type_list.append(ti['frClassify'])
-                job_name_list.append(ti['jobName'])
-                current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                last_update_list.append(current_time)
+            _add_ti_to_df_list(ti)
 
         d = {
-            'ATC_Name': atc_name_list,
-            'Fail_Step': fail_step_list,
-            'Error_Info': error_info_list,
-            'FR_ID': fr_id_list,
-            'FR_Type': fr_type_list,
-            'Job_Name': job_name_list,
-            'Last_Update': last_update_list
+            'ATC_Name': ATC_NAME_LIST,
+            'Fail_Step': FAIL_STEP_LIST,
+            'Error_Info': ERROR_INFO_LIST,
+            'FR_ID': FR_ID_LIST,
+            'FR_Type': FR_TYPE_LIST,
+            'Job_Name': JOB_NAME_LIST,
+            'Last_Update': LAST_UPDATE_LIST
         }
 
         df = pd.DataFrame(data=d)
-        writer = pd.ExcelWriter(excel_name,engine='xlsxwriter')
-        df.to_excel(writer,index=False,sheet_name=sheet_name)
+        _write_df_data_to_excel(df,excel_name=excel_name,sheet_name=sheet_name)
 
-        workbook  = writer.book
-        worksheet = writer.sheets[sheet_name]
+        return None
 
-        format1 = workbook.add_format({'text_wrap': True,'border': 1})
+def _add_ti_to_df_list(ti):
+    '''
+    把已经分析过的TI内容填进用于生成df的各个list中
+    '''
+    global ATC_NAME_LIST, FAIL_STEP_LIST, ERROR_INFO_LIST, FR_ID_LIST, FR_TYPE_LIST, JOB_NAME_LIST,LAST_UPDATE_LIST
+    if ti['frId']['value'] and ti['frClassify']:
+        ATC_NAME_LIST.append(ti['ATCName'])
+        FAIL_STEP_LIST.append(ti['failStep'])
+        ERROR_INFO_LIST.append(ti['errorInfo'])
+        FR_ID_LIST.append(ti['frId']['value'])
+        FR_TYPE_LIST.append(ti['frClassify'])
+        JOB_NAME_LIST.append(ti['jobName'])
+        current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        LAST_UPDATE_LIST.append(current_time)
 
-        worksheet.set_column('A:A', 25, format1)
-        worksheet.set_column('B:B', 40, format1)
-        worksheet.set_column('C:C', 70, format1)
-        worksheet.set_column('D:E', 12, format1)
-        worksheet.set_column('F:F', 30, format1)
-        worksheet.set_column('G:G', 20, format1)
+def _write_df_data_to_excel(df,excel_name='auto_ti.xlsx',sheet_name='bug list'):
+    writer = pd.ExcelWriter(excel_name,engine='xlsxwriter')
+    df.to_excel(writer,sheet_name=sheet_name,index=False)
 
-        writer.save()
+    workbook  = writer.book
+    worksheet = writer.sheets[sheet_name]
+
+    #设置格式
+    format1 = workbook.add_format({'text_wrap': True,'border': 1})
+    worksheet.set_column('A:A', 25, format1)
+    worksheet.set_column('B:B', 40, format1)
+    worksheet.set_column('C:C', 70, format1)
+    worksheet.set_column('D:E', 12, format1)
+    worksheet.set_column('F:F', 30, format1)
+    worksheet.set_column('G:G', 20, format1)
+
+    writer.save()
+
+def auto_submit_ti(batch_name,job_num,ti_list,user):
+    '''
+    根据ti_list中的内容自动填写ti
+    '''
+    url_submit = 'https://smartlab-service.int.net.nokia.com/api/frSubmit'
+
+    data = {
+        "username":user,
+        "jobName":batch_name,
+        "jobNum":job_num,
+        "groupID":"",
+        "tiSummary":"___",
+        "syncTIA": ti_list
+    }
+
+    #提交的是json数据，需要转换一下
+    data = json.dumps(data)
+    response = session_post(session,url=url_submit,headers=HEADERS,data=data,timeout=5,verify=False)
+    print('submit ti response: ', response.status_code)
 
 
 if __name__ == '__main__':
@@ -213,51 +305,12 @@ if __name__ == '__main__':
 
     session = login_sls(username, password)
 
-    ti_list = get_batch_ti_page(session, batch_name)
+    job_num, ti_list = get_batch_ti_page(session, batch_name)
 
-    auto_ti(session, ti_list)
+    ti_list_to_submit = update_ti_info(session, ti_list)
+    print("known TI to submit:\n", ti_list_to_submit)
 
-    # #get ti page
-    # url_ti = 'https://smartlab-service.int.net.nokia.com/atcReport'
-    # params = {
-    #     'job_name': 'LSFX_NFXSD_FANTF_FWLTB_ONU_IOP_EONU_STAND_01',
-    #     'job_num': '5',
-    #     'job_coverage': 'Weekly',
-    #     'groupID': '',
-    #     'username': 'jieminbz',
-    #     '_': '1640311330966',
-    # }
-
-    # response = session_get(session,url=url_ti,headers=HEADERS,params=params,timeout=5,verify=False)
-    # print(response.status_code)
-
-    # #获取所有的ti
-    # ti_list = eval(response.text)['data']
-    # # print(ti_list)
-    # print(len(ti_list))
-    # print(ti_list[0].keys())
-
-    #填写一个ti
-    url_submit = 'https://smartlab-service.int.net.nokia.com/api/frSubmit'
-
-    TI_1 = {"id":"34434816","frId":"BBN-45705","frClassify":"ATC","frNewOrOld":"New","frDesc":"","shortname":"jieminbz"}
-    TI_2 = {"id":"34434817","frId":"BBN-45705","frClassify":"ATC","frNewOrOld":"New","frDesc":"","shortname":"jieminbz"}
-    TI_list = []
-    TI_list.append(TI_1)
-    TI_list.append(TI_2)
-
-    data = {
-        "username":"jieminbz",
-        "jobName":"LSFX_NFXSD_FANTF_FWLTB_ONU_IOP_EONU_STAND_01",
-        "jobNum":"5",
-        "groupID":"",
-        "tiSummary":"___",
-        "syncTIA": TI_list
-    }
-
-    #提交的是json数据，需要转换一下
-    data = json.dumps(data)
-    response = session_post(session,url=url_submit,headers=HEADERS,data=data,timeout=5,verify=False)
-    print(response.status_code)
+    if ti_list_to_submit:
+        auto_submit_ti(batch_name,job_num,ti_list_to_submit,username)
 
     print("over!!!")
