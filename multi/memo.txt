@@ -83,7 +83,7 @@
 
         -join()     #等待所有子进程结束，必须先使用close()或terminate() 后才能调用join()
 
-    -asyncio模块    #单线程+异步协程
+2. 异步协程（asyncio）
 
         
 

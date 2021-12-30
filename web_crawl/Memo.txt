@@ -45,14 +45,6 @@
     response.status_code   #状态码
     response.enconding = response.apparent_encoding         # 从html的返回来猜测编码
 
-    -创建session        session可以携带cookie，让服务器记住登录的状态
-
-    session = requests.Session()
-    response = session.get()        #使用和requests.get() 相同
-    response = session.post()       #使用和requests.post() 相同
-
-
-
 2. url含义简介
 
     1. 协议部分: http
@@ -142,6 +134,20 @@
                              /text()       获取标签中直系的文本内容
                              //text()      获取标签中非直系文本内容（所有内容）
         获取属性             img/@src       img标签下的src属性
+
+5. session的相关操作（携带cookie，可以记住登录状态）
+
+    1. 先创建一个session对象
+        session = requests.Session()
+
+    2. 基于此session发送get或者post请求，这些请求会携带cookie
+        session.post(session,url=url_login_test,headers=HEADERS,data=data,timeout=5,verify=False)
+        session.get(session,url=url_ti_page,headers=HEADERS,params=params,timeout=5,verify=False)
+
+
+
+
+
 
 
 
