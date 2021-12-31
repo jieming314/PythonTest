@@ -4,6 +4,7 @@ import time, os
 '''
 通过Queue实现多进程间通信
 进程是通过
+未完成
 '''
 
 def f1(q, name):
