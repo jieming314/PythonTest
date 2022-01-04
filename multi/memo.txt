@@ -5,8 +5,8 @@
 
     -导入模块
 
-    from multiprocessing import Process
-    from multiprocessing import Pool
+        from multiprocessing import Process
+        from multiprocessing import Pool
 
     -Process 类简介
 
@@ -60,30 +60,223 @@
 
         方法和属性
 
-        -apply(func[, args[, kwds]])    #向pool中添加func，阻塞主进程，不推荐使用
+            -apply(func[, args[, kwds]])    #向pool中添加func，阻塞主进程，不推荐使用
 
-        -apply_async(func[, args[, kwds[, callback[, error_callback]]]]) 
-        向pool中添加func，不阻塞主进程，可以返回结果
+            -apply_async(func[, args[, kwds[, callback[, error_callback]]]]) 
+            向pool中添加func，不阻塞主进程，可以返回结果
 
-        -map(func, iterable[, chunksize]) #向pool中添加func并执行，会阻塞主进程知道所有子进程都完成
+            -map(func, iterable[, chunksize]) #向pool中添加func并执行，会阻塞主进程知道所有子进程都完成
 
-        -map_async(func, iterable[, chunksize[, callback[, error_callback]]])
-        类似于map，不过不会阻塞主进程，可以返回结果
+            -map_async(func, iterable[, chunksize[, callback[, error_callback]]])
+            类似于map，不过不会阻塞主进程，可以返回结果
 
-        -starmap(func, iterable[, chunksize])
-        类似map，不过传参方式有所不同，an iterable of [(1,2), (3, 4)] results in [func(1,2), func(3,4)]
-        还未尝试过
+            -starmap(func, iterable[, chunksize])
+            类似map，不过传参方式有所不同，an iterable of [(1,2), (3, 4)] results in [func(1,2), func(3,4)]
+            还未尝试过
 
-        -starmap_async(func, iterable[, chunksize[, callback[, error_callback]]])
-        starmap 和 map_async 的组合，还未尝试
+            -starmap_async(func, iterable[, chunksize[, callback[, error_callback]]])
+            starmap 和 map_async 的组合，还未尝试
 
-        -close()    #结束向pool中再添加子进程
+            -close()    #结束向pool中再添加子进程
 
-        -terminate()    #停止pool中的子程序 ？？
+            -terminate()    #停止pool中的子程序 ？？
 
-        -join()     #等待所有子进程结束，必须先使用close()或terminate() 后才能调用join()
+            -join()     #等待所有子进程结束，必须先使用close()或terminate() 后才能调用join()
+
+        multiprocessing.pool.AsyncResult    当使用了apply_async()或者map_async，可以得到异步的结果
+
+            -get([timeout])         Return the result when it arrives.
+                                    If timeout is not None and the result does not arrive within timeout seconds then multiprocessing.TimeoutError is raised.
+
+            -wait([timeout])        Wait until the result is available or until timeout seconds pass
+
+        一个使用apply_async() 和 callback的例子
+
+            def myfunc(x):
+                return [i for i in range(x)]
+            
+            A = []
+            def mycallback(x):
+                print('mycallback is called with {}'.format(x))
+                A.extend(x)
+
+            pool=Pool()
+            results = []
+            for x in (1,2):
+                r = pool.apply_async(myfunc, (x,), callback=mycallback)
+                results.append(r)
+            for r in results:
+                r.wait()
+
+            print([result.get() for result in results])          -> [[0], [0, 1]]
+            print(A)    -> [0, 0, 1]
+
+            注：回调函数被执行了2次
+            mycallback is called with [0]
+            mycallback is called with [0, 1]
+
 
 2. 异步协程（asyncio）
+
+    -基本概念
+
+        event_loop:     事件循环，是一个无线循环，可以把一些函数（协程）注册到这个循环对象上，当满足某些条件时，函数就会被循环执行
+
+        coroutine:      协程对象，可以将协程对象注册到事件循环中，它会被事件循环调用。
+                        使用async 修饰函数，得到协程对象
+
+        task:           任务，对协程对象的进一步封装，包含了任务的各个状态
+
+        future：        代表将来执行或还没有执行的任务，和task类似
+
+        await:          用来手工挂起阻塞方法的执行
+
+    -模块导入：
+
+        import asyncio
+    
+    -使用方法
+
+    1. 定义异步函数，并返回一个协程对象
+
+        async def request(url):
+            print("正在请求: ", url)
+            print(url, " 请求成功")
+            return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        c = request('www.baidu.com')
+
+    2.1 创建一个事件循环,将协程对象注册到事件循环中
+
+        loop =asyncio.get_event_loop()
+
+        loop.run_until_complete(c)
+
+    2.2 task的使用
+
+        loop =asyncio.get_event_loop()
+
+        task = loop.create_task(c)      #这里基于loop
+
+        print(task)
+        #得到返回<Task pending coro=<request() running at c:/N-20N3PF25D0EX-Data/jieminbz/Desktop/PythonTest/multi/coroutine_lishiping.py:7>>
+
+        loop.run_until_complete(task)
+
+        print(task)
+        #得到返回<Task finished coro=<request() done, defined at c:/N-20N3PF25D0EX-Data/jieminbz/Desktop/PythonTest/multi/coroutine_lishiping.py:7> result=None>
+
+    2.3 future的使用
+
+        loop =asyncio.get_event_loop()
+
+        #单任务
+        task = asyncio.ensure_future(c)     #这里基于asyncio
+        loop.run_until_complete(task)
+
+        #添加多任务
+        tasks = []
+        for url in urls:
+            c = request(url)    # 生成协程对象
+            task = asyncio.ensure_future(c)
+            tasks.append(task)
+        
+        loop.run_until_complete(asyncio.wait(tasks))
+
+    3. 回调
+
+        def callback_func(task):
+            #result返回的是任务对象中封装的协程对象对应函数的返回值
+            print(task.result())
+
+        loop =asyncio.get_event_loop()
+
+        task = asyncio.ensure_future(c)
+
+        task.add_done_callback(callback_func)       ##这里默认将task对象传递给回调函数
+
+        loop.run_until_complete(task)
+
+
+3. aiohttp 模块
+
+    官网：  https://docs.aiohttp.org/en/stable/
+    
+    -模块导入
+
+        import aiohttp
+        import asyncio
+
+    -示例
+
+    async def main():
+        async with aiohttp.ClientSession() as session:
+            async with session.get('http://python.org') as response:
+                print("Status:", response.status)
+                print("Content-type:", response.headers['content-type'])
+                html = await response.text()            # 注意这里要使用await 手工挂起
+                #await response.read()        二进制数据
+                #await response.json()        json字符串
+                print("Body:", html[:15], "...")
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
+
+
+
+4. aiofiles 模块
+
+    -模块导入
+
+        import aiohttp
+        import aiofiles
+
+    -示例
+
+        写操作
+        async with aiofiles.open(file_name,'wb') as fp:
+            await fp.write(mp4_content)
+        
+        读操作
+        async with aiofiles.open(file_name,'r',encoding='utf-8') as fp:
+            await fp.read(mp4_content)
+        
+        async with aiofiles.open(file_name,'r',encoding='utf-8') as fp:
+            async for line in fp:
+                ........
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        
+
+
+
 
         
 
