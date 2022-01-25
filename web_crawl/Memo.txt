@@ -132,7 +132,7 @@
         索引定位              //div[@class='song']/p[3]    class属性为song的div标签下的第3个p标签，注意索引从1开始
         获取文本
                              /text()       获取标签中直系的文本内容
-                             //text()      获取标签中非直系文本内容（所有内容）
+                             //text()      获取标签中非直系文本内容（所有内容）, 一个list
         获取属性             img/@src       img标签下的src属性
 
 5. session的相关操作（携带cookie，可以记住登录状态）
