@@ -50,10 +50,15 @@ texts = [[word for word in document.lower().split() if word not in stoplist]
 
 # Count word frequencies
 from collections import defaultdict
+'''
+defaultdict的作用：
+当从defaultdict取值时，如果key不存在，会返回一个默认值。
+defaultdict接受一个工厂函数作为参数，这个factory_function可以是list、set、str等等。比如list对应[ ]，str对应的是空字符串，set对应set( )，int对应0
+'''
 frequency = defaultdict(int)
 for text in texts:
     for token in text:
-        frequency[token] += 1
+        frequency[token] += 1   #frequency[token] 第一次出现时值为0，得到的是texts中所有词的词频
 
 
 # print(frequency)
@@ -146,7 +151,7 @@ print(tfidf[dictionary.doc2bow(words)])
 '''
 [(5, 0.5898341626740045), (11, 0.8075244024440723)]
 元组中，第一个表示的是token id，第二个是td-idf加权值
-system在原语料中出现4次，它的加权值低；minors在原语料中出现2次，它的加权值低
+system在原语料中出现4次，它的加权值低；minors在原语料中出现2次，它的加权值高
 '''
 
 

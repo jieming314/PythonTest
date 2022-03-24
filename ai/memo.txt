@@ -1,0 +1,147 @@
+
+1. 首先得到原始的语料(Corpus), 由多个文档(document)组成，例如：
+text_corpus = [
+    "Human machine interface for lab abc computer applications",
+    "A survey of user opinion of computer system response time",
+    "The EPS user interface management system",
+    "System and human system engineering testing of EPS",
+    "Relation of user perceived response time to error measurement",
+    "The generation of random binary unordered trees",
+    "The intersection graph of paths in trees",
+    "Graph minors IV Widths of trees and well quasi ordering",
+    "Graph minors A survey",
+]
+
+然后经过处理，例如去除stop word，去除仅出现一次的word，得到一个处理过的corpus，例如：
+
+texts= [
+    ['human', 'interface', 'computer'],
+    ['survey', 'user', 'computer', 'system', 'response', 'time'],
+    ['eps', 'user', 'interface', 'system'],
+    ['system', 'human', 'system', 'eps'],
+    ['user', 'response', 'time'],
+    ['trees'],
+    ['graph', 'trees'],
+    ['graph', 'minors', 'trees'],
+    ['graph', 'minors', 'survey']
+ ]
+
+
+2. 生成字典 dictionary
+
+from gensim import corpora
+dictionary = corpora.Dictionary(texts) # 这里的输入必须是二维的list
+
+返回每个word的id
+pprint.pprint(dictionary.token2id)
+
+{'computer': 0,
+ 'eps': 8,
+ 'graph': 10,
+ 'human': 1,
+ 'interface': 2,
+ 'minors': 11,
+ 'response': 3,
+ 'survey': 4,
+ 'system': 5,
+ 'time': 6,
+ 'trees': 9,
+ 'user': 7}
+
+
+
+3. 把处理过的语料词袋化
+bow_corpus = [dictionary.doc2bow(text) for text in processed_corpus]
+
+返回的是稀疏向量
+[[(0, 1), (1, 1), (2, 1)],  # computer 出现1次，human 出现1次，interface 出现1次
+ [(0, 1), (3, 1), (4, 1), (5, 1), (6, 1), (7, 1)],
+ [(2, 1), (5, 1), (7, 1), (8, 1)],
+ [(1, 1), (5, 2), (8, 1)],
+ [(3, 1), (6, 1), (7, 1)],
+ [(9, 1)],
+ [(9, 1), (10, 1)],
+ [(9, 1), (10, 1), (11, 1)],
+ [(4, 1), (10, 1), (11, 1)]]
+
+
+4. 生成模型
+from gensim import models
+tfidf = models.TfidfModel(bow_corpus)   # step 1 -- initialize a model
+doc_bow = [(0, 1), (1, 1)]
+tfidf[doc_bow]  # step 2 -- use the model to transform vectors
+
+返回的内容
+[(0, 0.7071067811865476), (1, 0.7071067811865476)]
+前者表示的是token id，第二个是td-idf加权值
+
+5. 相似度比较
+
+from gensim import similarities
+index = similarities.SparseMatrixSimilarity(tfidf[bow_corpus], num_features=12)   #生成index对象
+query_document = 'system engineering'.split()
+query_bow = dictionary.doc2bow(query_document)
+sims = index[tfidf[query_bow]]          #计算相似度
+
+返回： [(0, 0.0), (1, 0.32448703), (2, 0.41707572), (3, 0.7184812), (4, 0.0), (5, 0.0), (6, 0.0), (7, 0.0), (8, 0.0)]
+从结果可以看出，query_document 的内容和第四篇的相似的最高71%
+
+
+
+
+
+
+词袋模型(bag of word)介绍：
+一段文本（比如一个句子或是一个文档）可以用一个装着这些词的袋子来表示，这种表示方式不考虑文法以及词的顺序，例如以下有2个文本：
+
+(1) John likes to watch movies. Mary likes movies too.
+
+(2) John also likes to watch football games.
+
+基于上面2个文本，可以构建出一个list:
+
+["John", "likes", "to", "watch", "movies", "also", "football", "games", "Mary", "too"]  # 这里面词的顺序无关紧要
+
+然后上面的2个文本可以被表示成：
+
+(1) [1, 2, 1, 1, 2, 0, 0, 0, 1, 1]   # "John" 出现1次，"likes" 出现2次, "to"出现1次，依次类推
+
+(2) [1, 1, 1, 1, 0, 1, 1, 1, 0, 0]
+
+
+tf-idf模型（term frequency–inverse document frequency）介绍
+tf-idf是一种统计方法，用以评估一字词对于一个文件集或一个语料库中的其中一份文件的重要程度。字词的重要性随着它在文件中出现的次数成正比增加，但同时会随着它在语料库中出现的频率成反比下降
+
+tf(term frequency): 指的是某一个给定的词语在该文件中出现的频率
+
+idf(inverse document frequency): 是一个词语普遍重要性的度量。某一特定词语的idf，可以由总文件数目除以包含该词语之文件的数目，再将得到的商取以10为底的对数得到
+
+tf-idf = tf * idf
+某一特定文件内的高词语频率，以及该词语在整个文件集合中的低文件频率，可以产生出高权重的tf-idf。因此，tf-idf倾向于过滤掉常见的词语，保留重要的词语。
+
+例子：
+假如一篇文件的总词语数是100个，而词语“母牛”出现了3次，那么“母牛”一词在该文件中的词频（tf）就是3/100=0.03
+而IDF的计算方法是以文件集的文件总数，除以出现“母牛”一词的文件数。所以，如果“母牛”一词在1,000份文件出现过，而文件总数是10,000,000份的话，其逆向文件频率就是lg（10,000,000 / 1,000）=4。
+最后的tf-idf的分数为0.03 * 4=0.12。 
+
+
+余弦相似性（cosine similarity）介绍
+余弦相似性通过测量两个向量的夹角的余弦值来度量它们之间的相似性。0度角的余弦值是1，而其他任何角度的余弦值都不大于1；并且其最小值是-1。
+从而两个向量之间的角度的余弦值确定两个向量是否大致指向相同的方向。两个向量有相同的指向时，余弦相似度的值为1；两个向量夹角为90°时，余弦相似度的值为0；两个向量指向完全相反的方向时，余弦相似度的值为-1。这结果是与向量的长度无关的，仅仅与向量的指向方向相关。余弦相似度通常用于正空间，因此给出的值为0到1之间。
+例如在信息检索中，每个词项被赋予不同的维度，而一个文档由一个向量表示，其各个维度上的值对应于该词项在文档中出现的频率。余弦相似度因此可以给出两篇文档在其主题方面的相似度。 
+
+
+潜在语义索引(Latent Semantic Indexing，LSI)介绍
+
+以下摘自维基百科：
+
+所谓隐性语义索引指的是，怎样通过海量文献找出词汇之间的关系。当两个词或一组词大量出现在同一个文档中时，这些词之间就可以被认为是语义相关。机器并不知道某个词究竟代表什么，不知道某个词是什么意思。 比如：
+
+    电脑和计算机这两个词在人们写文章时经常混用，这两个词在大量的网页中同时出现，搜索引擎就会认为这两个词是极为语义相关的。
+
+    SEO和搜索引擎优化（虽然一个是英语，一个是中文）这两个词大量出现在相同的网页中，虽然搜索引擎还不能知道搜索引擎优化或SEO指的是什么，但是却可以从语义上把“SEO”，“搜索引擎优化”，“search engine optimization”，“SEM”等词紧紧的连在一起。可见潜在语义索引并不依赖于语言。
+    
+    如苹果和橘子这两个词，也是大量出现在相同文档中，不过紧密度低于同义词。所以搜索引擎不会认为它们是语义相关的。
+
+
+

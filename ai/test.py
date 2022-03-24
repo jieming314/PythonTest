@@ -6,6 +6,7 @@ from multiprocessing import Pool
 import os
 import pandas as pd
 from lxml import etree
+from pprint import pprint
 
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36'}
@@ -79,9 +80,9 @@ def retrieve_ti_history_from_sls_mp(session,draw,search_window,ti_type):
     ti_list = []
 
     response = session.post(url=url_bug_history,headers=HEADERS,data=data,timeout=90,verify=False)
-    bug_list = response.json()['data']
-    print(len(bug_list))
-    # print(bug_list)
+    ti_list = response.json()['data']
+    print(len(ti_list))
+    #print(ti_list)
 
     print(f'stop child process {pid}')
     return ti_list
@@ -103,20 +104,23 @@ def export_ti_list_to_excel(ti_list):
     job_name_list = []
     job_number_list = []
     ti_type_list = []
+    bug_id_list = []
 
     for ti in ti_list:
         ti_id_list.append(ti['id'])
         atc_name_list.append(ti['ATCName'])
         job_name_list.append(ti['parentPlatform'])
-        job_number_list.append('NA')
+        job_number_list.append(ti['jobNum'])
         ti_type_list.append(ti['TIType'])
+        bug_id_list.append(ti['frId'])
 
     d = {
     'Ti_Id': ti_id_list,
     'Atc_Name': atc_name_list,
     'Job_Name': job_name_list,
     'Job_Num': job_number_list,
-    'TI_Type': ti_type_list
+    'TI_Type': ti_type_list,
+    'Bug_Id': bug_id_list
     }
 
     df = pd.DataFrame(data=d)
@@ -131,7 +135,7 @@ def export_ti_list_to_excel(ti_list):
     format1 = workbook.add_format({'text_wrap': True,'border': 1})
     worksheet.set_column('A:A', 10, format1)
     worksheet.set_column('B:C', 50, format1)
-    worksheet.set_column('D:E', 15, format1)
+    worksheet.set_column('D:F', 15, format1)
     writer.save()
 
 def _create_url_from_job_info():
@@ -174,10 +178,30 @@ def retrieve_atc_step_info_from_log(file_name,atc_name):
     case_messages = [message for message in case_messages if message != '\n']
     case_messages = [message for message in case_messages if message != '\r\n']
 
-    # print(case_messages)
+    #pprint(list(enumerate(case_messages)))
     print(len(case_messages))
 
     return case_messages
+
+def retrieve_traffic_step_info_from_log(file_name):
+    '''
+    从detailed traffic log中取文本
+    返回一个列表
+    '''
+    print(f'file name is {file_name}')
+
+    parser = etree.HTMLParser(encoding='utf-8')
+    tree = etree.parse(file_name,parser=parser)
+    traffic_messages = tree.xpath('//text()')
+
+    # print(len(case_messages))
+    traffic_messages = [message for message in traffic_messages if message != '\n']
+    traffic_messages = [message for message in traffic_messages if message != '\r\n']
+
+    #pprint(list(enumerate(case_messages)))
+    print(len(traffic_messages))
+
+    return traffic_messages
 
 if __name__ == '__main__':
     
@@ -188,7 +212,7 @@ if __name__ == '__main__':
     password = 'Jim#2345'
     batch_name = 'LSFX_NFXSD_FANTF_FWLTB_ONU_IOP_EONU_STAND_01'
 
-    session = login_sls(username, password)
+    # session = login_sls(username, password)
 
     # ti_type_list = ['ATC','SW','ENV']
     # search_window = 20
@@ -203,20 +227,41 @@ if __name__ == '__main__':
 
     # export_ti_list_to_excel(all_ti_list)
 
-    output_xml_url = 'http://smartlab-service.int.net.nokia.com:9000/log/Fi-Hardening_and_CFT/2203.029/LSFX_NFXSE_FANTF_FGLTB_GPON_EONUAV_WEEKLY_02/SB_Logs_5B94-atxuser-Jan03051003_L2FWD/ROBOT/output.xml'
+    # output_xml_url = 'http://smartlab-service.int.net.nokia.com:9000/log/Fi-Hardening_and_CFT/2203.029/LSFX_NFXSE_FANTF_FGLTB_GPON_EONUAV_WEEKLY_02/SB_Logs_5B94-atxuser-Jan03051003_L2FWD/ROBOT/output.xml'
 
-    file_name = download_atc_log_file(session, output_xml_url, 'LSFX_NFXSE_FANTF_FGLTB_GPON_EONUAV_WEEKLY_02', '34')
+    # file_name = download_atc_log_file(session, output_xml_url, 'LSFX_NFXSE_FANTF_FGLTB_GPON_EONUAV_WEEKLY_02', '34')
 
-    #从excel中先挑前10个
-    df = pd.read_excel('ti_list.xlsx',engine='openpyxl')
-    case_name_list = [case_name for case_name in df.loc[0:10,'Atc_Name']]
-    # print(df.loc[0:10,'Atc_Name'])
+    # #从excel中先挑前10个
+    # df = pd.read_excel('ti_list.xlsx',engine='openpyxl')
+    # case_name_list = [case_name for case_name in df.loc[0:10,'Atc_Name']]
+    # # print(df.loc[0:10,'Atc_Name'])
 
+    #for debug only
+    #file_name = 'nglt-c_output.xml'
+    file_name = 'traffic_test.html'
+    case_name_list = ['MGMT_BP_COUNTER_01']
     res = []
-    with open('corpus.txt','w',encoding='utf-8') as fp:
-        for case_name in case_name_list:
-            res.append(case_name + '\n' + str(retrieve_atc_step_info_from_log(file_name,case_name)) + '\n')
+    # with open('corpus.txt','w',encoding='utf-8') as fp:
+    #     for case_name in case_name_list:
+    #         #res.append(case_name + '\n' + str(retrieve_atc_step_info_from_log(file_name,case_name)) + '\n')
+    #         case_steps = retrieve_atc_step_info_from_log(file_name,case_name)
+    #         for num, line in enumerate(case_steps):
+    #             res.append('^^^' + str(num) + ' : ' + line + '###\n')
+    #     fp.writelines(res)
+    
+    with open('corpus_traffic.txt','w',encoding='utf-8') as fp:
+        traffic_steps = retrieve_traffic_step_info_from_log(file_name)
+        for num, line in enumerate(traffic_steps):
+            res.append('^^^' + str(num) + ' : ' + line + '###\n')
         fp.writelines(res)
+
+    #debug end here
+
+    # res = []
+    # with open('corpus.txt','w',encoding='utf-8') as fp:
+    #     for case_name in case_name_list:
+    #         res.append(case_name + '\n' + str(retrieve_atc_step_info_from_log(file_name,case_name)) + '\n')
+    #     fp.writelines(res)
 
     # print(res)
 
