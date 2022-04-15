@@ -10,8 +10,6 @@ import time,os,re,shutil,wget
 from multiprocessing import Pool
 import pandas as pd
 from lxml import etree
-from pprint import pprint
-import pandas as pd
 from gensim import corpora, models, similarities
 from collections import defaultdict
 
@@ -34,7 +32,6 @@ def login_sls(username, password):
     '''
     登录sls
     '''
-
     url_login_test = 'https://smartlab-service.int.net.nokia.com/api/logintest'
     data = {
         'username': username,
@@ -51,9 +48,6 @@ def login_sls(username, password):
     login_detail_dict.pop('seq_nbr')
     login_detail_dict.pop('result')
 
-    # print(response.json())
-    # print(type(response.json()))
-
     url_login = 'https://smartlab-service.int.net.nokia.com/ajax/login_session'
     data = {
         'level': 'trusted',
@@ -68,12 +62,11 @@ def login_sls(username, password):
 
     return session
 
-def retrieve_history_ti(session, ti_type_list=['SW', 'ATC', 'ENV'], ti_nums=20, release=''):
+def retrieve_history_ti(session, ti_type_list=['SW', 'ATC', 'ENV','SW-ONT'], ti_nums=20):
     '''
     从sls上获取history ti entries, 输出一个excel表格
     ti_nums 是每类TI的总数
     '''
-
     search_window = 20
     search_round = int(ti_nums/search_window)
     with Pool() as p:
@@ -88,6 +81,30 @@ def retrieve_history_ti(session, ti_type_list=['SW', 'ATC', 'ENV'], ti_nums=20, 
     output_file = _export_history_ti_list_to_excel(ALL_TI_LIST)
 
     return output_file
+
+def retrieve_history_ti_with_release(session,release_list,ti_type_list=['SW', 'ATC', 'ENV','SW-ONT'], ti_nums_per_release=100):
+    '''
+    和retrieve_history_ti(), 携带一个release参数，是个list，获取落在release list内的history ti
+    合并结果输出一个excel
+    '''
+    search_window = 50
+    search_round = int(ti_nums_per_release/search_window)
+    if release_list:
+        with Pool() as p:
+            for release_id in release_list:
+                for ti_type in ti_type_list:
+                    if search_round == 0:
+                        search_round = 1  # at least search once
+                    for i in range(search_round):
+                        p.apply_async(_retrieve_ti_history_from_sls_mp,(session,i,search_window,ti_type,release_id),callback=_mycallback)
+            p.close()
+            p.join()
+    else:
+        print('release list is empty, pls give valid release id list')
+    
+    output_file = _export_history_ti_list_to_excel(ALL_TI_LIST)
+    return output_file
+ 
 
 def _retrieve_ti_history_from_sls_mp(session,draw,search_window,ti_type,release_id=''):
     '''
@@ -257,11 +274,14 @@ def generate_input_excel_for_ml(session, input_file):
             if xml_file:
                 tmp_steps1 = _retrieve_atc_parent_setup_step_from_log(xml_file, atc_name)
                 tmp_steps2 = _retrieve_atc_step_from_log(xml_file, atc_name)
-                complete_case_steps = tmp_steps1 + tmp_steps2
-                atc_file_name = job_index + '_' + atc_name+'_ROBOT_MESSAGES.txt'
-                with open(os.path.join(LOG_DIR,atc_file_name),'w',encoding='UTF-8') as fp:
-                    fp.writelines(complete_case_steps)
-                robot_log_list.append(atc_file_name)
+                if tmp_steps2:
+                    complete_case_steps = tmp_steps1 + tmp_steps2
+                    atc_file_name = job_index + '_' + atc_name+'_ROBOT_MESSAGES.txt'
+                    with open(os.path.join(LOG_DIR,atc_file_name),'w',encoding='UTF-8') as fp:
+                        fp.writelines(complete_case_steps)
+                    robot_log_list.append(atc_file_name)
+                else:
+                    robot_log_list.append('None')
             else:
                 robot_log_list.append('None')
             traffic_log_name = _download_atc_traffic_file(session,robot_log_url,job_name, job_num, batch_name, domain_name,atc_name)
@@ -359,10 +379,6 @@ def _download_robot_xml_file(url,job_name,job_num,batch_name,domain_name):
     else:
         print('start downloading target robot output xml ...')
         try:
-            # response = session.get(target_file,headers=HEADERS,timeout=600,verify=False)
-            # content = response.text
-            # with open(os.path.join(LOG_DIR,output_file_name),'w',encoding='utf-8') as fp:
-            #     fp.write(content)
             tmp_file_name = wget.download(target_file)
             print('\ndownloading output xml completed')
             shutil.move(tmp_file_name,os.path.join(LOG_DIR,output_file_name))
@@ -445,13 +461,17 @@ def _retrieve_atc_step_from_log(file_name,atc_name):
     从output.xml中获取atc的执行步骤
     返回一个list
     '''
-    print('start to retrieve %s steps from file %s' % (atc_name, file_name))
-
-    parser = etree.HTMLParser(encoding='utf-8')
-    tree = etree.parse(os.path.join(LOG_DIR,file_name),parser=parser)
-    test_tag = tree.xpath(f'//test[@name="{atc_name}"]')[0]
-    test_kw_tags = test_tag.xpath('.//kw')  #all kw tag under this test
+    print('retrieve %s steps from file %s' % (atc_name, file_name))
     test_messages = []
+    try:
+        parser = etree.HTMLParser(encoding='utf-8')
+        tree = etree.parse(os.path.join(LOG_DIR,file_name),parser=parser)
+        test_tag = tree.xpath(f'//test[@name="{atc_name}"]')[0]
+        test_kw_tags = test_tag.xpath('.//kw')  #all kw tag under this test
+    except Exception as inst:
+        print('cannot fetch keyword tags due to %s, fail to retrieve atc steps' % inst)
+        return test_messages
+
     for kw_tag in test_kw_tags:
         kw_name = kw_tag.xpath('./@name')[0]
         #print(kw_name)
@@ -471,9 +491,9 @@ def _retrieve_atc_step_from_log(file_name,atc_name):
             #print('tmp msg is %s' % tmp_msg)
             test_messages.append(tmp_msg)
     
-    print(len(test_messages))
+    #print(len(test_messages))
     print('retrieve atc steps completed')
-
+    test_messages = [each for each in test_messages if each]
     return test_messages
 
 def _retrieve_atc_parent_setup_step_from_log(file_name,atc_name):
@@ -481,14 +501,19 @@ def _retrieve_atc_parent_setup_step_from_log(file_name,atc_name):
     从output.xml中获取atc parent suite的setup
     返回一个list
     '''
-    parser = etree.HTMLParser(encoding='utf-8')
-    tree = etree.parse(os.path.join(LOG_DIR,file_name),parser=parser)
-    test_tag = tree.xpath(f'//test[@name="{atc_name}"]')[0]
-    test_id = test_tag.xpath('./@id')[0]
-    print(f'retrieve atc parent steps for case {atc_name}')
-    test_id_list = test_id.split('-')[0:-1]
-
     setup_messages = []
+    print('retrieve parent steps for case %s' % atc_name)
+    try:
+        parser = etree.HTMLParser(encoding='utf-8')
+        tree = etree.parse(os.path.join(LOG_DIR,file_name),parser=parser)
+        test_tag = tree.xpath(f'//test[@name="{atc_name}"]')[0]
+        test_id = test_tag.xpath('./@id')[0]
+        print(f'retrieve atc parent steps for case {atc_name}')
+        test_id_list = test_id.split('-')[0:-1]
+    except Exception as inst:
+        print('cannot fetch test id due to %s, fail to retrieve parent steps' % inst)
+        return setup_messages
+
     for num, id in enumerate(test_id_list):
         if num == 0:
             test_id = id
@@ -532,7 +557,8 @@ def _retrieve_atc_parent_setup_step_from_log(file_name,atc_name):
                         tmp_msg = tmp_msg[0] + '\n'
                     setup_messages.append(tmp_msg)
 
-    print(len(setup_messages))
+    #print(len(setup_messages))
+    print('retrieve parent steps completed')
     #remove empty list element
     setup_messages = [each for each in setup_messages if each]
     return setup_messages
@@ -572,6 +598,7 @@ def build_ml_model(file_name):
         return
 
     df = pd.read_excel(excel_file,engine='openpyxl')
+    df = df.drop(df[df['ROBOT_LOG'] == 'None'].index) #remove ROBOT_LOG column为None的行
     for index, row in df.iterrows():
         robot_messages_file = row['ROBOT_LOG']
         traffic_messages_file = row['TRAFFIC_LOG']
@@ -651,14 +678,134 @@ def _retrieve_text_in_message_file(file_name):
     #print(document_texts)
     return document_texts
 
-def _new_reference(query0,qtype='FileList'):
+def validate_ti_reference(session,job_name,job_num,batch_name,domain_name,ml_excel):
+    '''
+    验证一个job new ti reference的准确性
+    '''
+    atc_result_list = _retrieve_known_ti(session,job_name,job_num,batch_name,domain_name)
+    robot_log_url = _create_robot_url_of_ti(session,job_name,job_num,batch_name,domain_name)
+    job_index = job_name+ '_' + job_num + '_' + batch_name+ '_'  + domain_name
+
+    #read ml excel to refer bug type
+    df = pd.read_excel(os.path.join(LOG_DIR,ml_excel),engine='openpyxl')
+    history_ti_dict = df.T.to_dict('list')
+    print(f'Start to auto analyze new TI for job: {job_index}')
+    
+    match_num = 0.0
+    total_num = len(atc_result_list)
+
+    if robot_log_url:
+        for each in atc_result_list:
+            atc_name = each[0]
+            atc_bug_type = each[1]
+            file_list_to_reference = []
+            print('#'*30)
+            print(job_index + ':' + ' '*4 + atc_name)
+            xml_file = _download_robot_xml_file(robot_log_url, job_name, job_num, batch_name, domain_name)
+            if xml_file:
+                tmp_steps1 = _retrieve_atc_parent_setup_step_from_log(xml_file, atc_name)
+                tmp_steps2 = _retrieve_atc_step_from_log(xml_file, atc_name)
+                if tmp_steps2:
+                    complete_case_steps = tmp_steps1 + tmp_steps2
+                    atc_file_name = job_index + '_' + atc_name+'_ROBOT_MESSAGES.txt'
+                    with open(os.path.join(LOG_DIR,atc_file_name),'w',encoding='UTF-8') as fp:
+                        fp.writelines(complete_case_steps)
+                    file_list_to_reference.append(atc_file_name)
+                    traffic_log_name = _download_atc_traffic_file(session,robot_log_url,job_name, job_num, batch_name, domain_name,atc_name)
+                    if traffic_log_name:
+                        traffic_steps = _retrieve_traffic_step_from_log(job_name, job_num, batch_name, domain_name,traffic_log_name)
+                        traffic_file_name = job_index + '_' + atc_name + '_TRAFFIC_MESSAGES.txt'
+                        with open(os.path.join(LOG_DIR,traffic_file_name),'w',encoding='UTF-8') as fp:
+                            fp.writelines(traffic_steps)
+                        file_list_to_reference.append(traffic_file_name)
+
+            sims_list = _ti_reference(file_list_to_reference)
+            if sims_list:
+                ref_ti_type = _reference_method_1(sims_list, history_ti_dict)
+                if atc_bug_type == ref_ti_type:
+                    match_num += 1
+                    print(f'actual ti type: {atc_bug_type}, recomended ti type: {ref_ti_type}, MATCH')
+                else:
+                    print(f'actual ti type: {atc_bug_type}, recomended ti type: {ref_ti_type}, NOT MATCH')
+            else:
+                print(f'cannot recommend ti type for {atc_name} due to no query document')
+    else:
+        print(f'cannot find robot url for {job_index}')
+
+    print('analyzed totally %d TIs, matched %d TIs' % (int(total_num), int(match_num)))
+    print('reference accurucy is %f' % (match_num/total_num,))
+
+def _retrieve_known_ti(session,job_name,job_num,batch_name,domain_name):
+    '''
+    根据job_name,job_num,batch_name,domain_name 获取已知的ti，用来验证模型的准确性
+    返回(atc name, bug type) tuple 的 一个list
+    '''
+    web_url = 'https://smartlab-service.int.net.nokia.com/atcReport'
+    job_num = str(job_num)
+    params = {
+        'job_name': job_name,
+        'job_num': job_num,
+        'job_coverage': batch_name,
+        'groupID': '',
+        'Domain': domain_name,
+        'username': ''
+    }
+
+    response = session.get(web_url,params=params,headers=HEADERS,timeout=30,verify=False)
+    response_text = response.text.replace('null','" "')
+    ti_list = eval(response_text)['data']
+
+    atc_result_list = []
+    for each in ti_list:
+        if each['frClassify'] in ['ATC','SW','ENV','SW-ONT'] and each['frId']['value']:
+            atc_name = each['ATCName']
+            bug_type = each['frClassify']
+            #skip setup and teardown ti for the time being
+            if atc_name.startswith('teardown:') or atc_name.startswith('setup:'):
+                continue
+            t = (atc_name, bug_type)
+            atc_result_list.append(t)
+
+    return atc_result_list
+
+def _retrieve_new_ti(session,job_name,job_num,batch_name,domain_name):
+    '''
+    根据job_name,job_num,batch_name,domain_name 获取未分析的ti
+    返回一个atc name list
+    '''
+
+    web_url = 'https://smartlab-service.int.net.nokia.com/atcReport'
+    job_num = str(job_num)
+    params = {
+        'job_name': job_name,
+        'job_num': job_num,
+        'job_coverage': batch_name,
+        'groupID': '',
+        'Domain': domain_name,
+        'username': ''
+    }
+
+    response = session.get(web_url,params=params,headers=HEADERS,timeout=30,verify=False)
+    response_text = response.text.replace('null','" "')
+    ti_list = eval(response_text)['data']
+
+    atc_name_list = []
+    for each in ti_list:
+        if each['frNewOrOld'] == 'Old' and each['frClassify'] and each['frId']['value']:
+            continue    #known ti, skip
+        else:
+            atc_name = each['ATCName']
+            atc_name_list.append(atc_name)
+    
+    #print(atc_name_list)
+    return atc_name_list
+
+def _ti_reference(query0,qtype='FileList'):
     '''
     根据query0文本的相似度匹配
     qtype默认是Filelist, query0 为一个文件名列表; 否则 query0 为文本列表
-    输出匹配度最高的document index
-    [(10, 1.0), (9, 0.7924244), (7, 0.65759844), (17, 0.57193935), (18, 0.5716857), (13, 0.46947253), (14, 0.46897295),
-     (3, 0.4552591), (2, 0.4551852), (16, 0.45175928), (5, 0.43906817), (15, 0.43793786)]
-    上述例子中, 输出10
+    输出匹配度最高的前5个元素，例如：
+    [(10, 1.0), (9, 0.7924244), (7, 0.65759844), (17, 0.57193935), (18, 0.5716857), (13, 0.46947253)]
     '''
     #load ai model
     print('Load AI Analysis Model')
@@ -692,26 +839,33 @@ def _new_reference(query0,qtype='FileList'):
         query_lsi = lsi[query_bow]
         sims = index[query_lsi]
         sort_sims = sorted(enumerate(sims), key=lambda x: x[1], reverse=True)
-        print(sort_sims)
     else:
-        return None
+        print('no input document to query')
+        return []
 
-    #return the most similar index in model
-    return sort_sims[0][0]
+    return sort_sims
 
-def retrieve_new_ti(session,job_name,job_num,batch_name,domain_name):
-    pass
-
-
-
-def new_ti_reference_generate_output_result(file_name):
+def _reference_method_1(sims_list,history_ti_dict):
     '''
-    读取新TI的信息，做出推荐，并生成excel保存
-    输入为一个excel文件
+    method 1: 直接推荐相似度最高的history ti 的 bug type
     '''
-    pass
+    print('ti reference method 1')
 
+    sims_list = sims_list[:5] # 取前5个
+    print('most 5 similar index: %s' % str(sims_list))
+    ti_type_list = []
+    for each in sims_list:
+        index = each[0]
+        ti_name = history_ti_dict[index][0]
+        ti_type = history_ti_dict[index][1]
+        bug_id = history_ti_dict[index][2]
+        t = (ti_name,ti_type,bug_id)
+        ti_type_list.append(t)
+    print('most 5 similar ti: %s' % str(ti_type_list))
+    print('reference method 1 recommended: %s' % str(ti_type_list[0]))
 
+    dict_index = sims_list[0][0]
+    return history_ti_dict[dict_index][1]
 
 if __name__ == '__main__':
     
@@ -720,22 +874,14 @@ if __name__ == '__main__':
     #for debug
     username = 'jieminbz'
     password = 'Jim#2346'
-    batch_name = 'LSFX_NFXSD_FANTF_FWLTB_ONU_IOP_EONU_STAND_01'
 
-    # session = login_sls(username, password)
+    session = login_sls(username, password)
 
-    #_retrieve_ti_history_from_sls_mp(session,1,5,ti_type=['ATC'])
+    tmp_excel = retrieve_history_ti_with_release(session,release_list=['22.03','6.6'], ti_nums_per_release=200)
+    # tmp_excel = generate_input_excel_for_ml(session,tmp_excel)
+    # build_ml_model(tmp_excel)
 
-    #tmp_excel = retrieve_history_ti(session)
-    #tmp_excel = generate_input_excel_for_ml(session,tmp_excel)
-
-    #generate_input_excel_for_ml(session,'history_ti_list_20220405.xlsx')
-
-    # build_ml_model('ti_list_for_ml_20220405.xlsx')
-
-    _new_reference(['CHERLAB-NFXSD-FANTG-REDUN-FTTU-DAILY-01_963_SLS_BATCH_1__EQMT_ACT_ACT_REDUN_11_ROBOT_MESSAGES.txt','CHERLAB-NFXSD-FANTG-REDUN-FTTU-DAILY-01_963_SLS_BATCH_1__EQMT_ACT_ACT_REDUN_11_TRAFFIC_MESSAGES.txt'])
-
-
+    # validate_ti_reference(session,'SHA_NFXSE_FANTH_P2P_FELTC_WEEKLY_01','583','SLS_BATCH_1','','ti_list_for_ml_20220407.xlsx')
 
     print("cost %d seconds" % int(time.time() - start_time))
 
