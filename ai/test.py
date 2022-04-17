@@ -40,7 +40,7 @@ def login_sls(username, password):
     session = requests.Session()
 
     #发送第一个post请求，得到user 详细信息
-    response = session.post(url=url_login_test,headers=HEADERS,data=data,timeout=30,verify=False)
+    response = session.post(url=url_login_test,headers=HEADERS,data=data,timeout=600,verify=False)
     print(response.status_code)
     login_detail_dict = response.json()  # 返回一个字典
     login_detail_dict.pop('auth_status')
@@ -57,7 +57,7 @@ def login_sls(username, password):
     data['short_name'] = login_detail_dict['username']
     # print(data)
     # 发送第二个post请求，用来登录
-    response = session.post(url=url_login,headers=HEADERS,data=data,timeout=30,verify=False)
+    response = session.post(url=url_login,headers=HEADERS,data=data,timeout=600,verify=False)
     print('login sls response:', response.status_code)
 
     return session
@@ -136,7 +136,7 @@ def _retrieve_ti_history_from_sls_mp(session,draw,search_window,ti_type,release_
 
     ti_list = []
 
-    response = session.post(url=url_bug_history,headers=HEADERS,data=data,timeout=90,verify=False)
+    response = session.post(url=url_bug_history,headers=HEADERS,data=data,timeout=600,verify=False)
     ti_list = response.json()['data']
     print(len(ti_list))
     #print(ti_list)
@@ -226,7 +226,8 @@ def generate_input_excel_for_ml(session, input_file):
     '''
 
     df = pd.read_excel(os.path.join(LOG_DIR,input_file),engine='openpyxl')
-    df.dropna(subset=['JOB_NAME','JOB_NUM','ATC_NAME','TI_TYPE','BUG_ID','BUG_STATUS','RELEASE_ID'],inplace=True)
+    #df.dropna(subset=['JOB_NAME','JOB_NUM','ATC_NAME','TI_TYPE','BUG_ID','BUG_STATUS','RELEASE_ID'],inplace=True)
+    df.dropna(subset=['JOB_NAME','JOB_NUM','ATC_NAME','TI_TYPE','BUG_ID'],inplace=True)
     df.fillna('',inplace=True)
     df.drop_duplicates(subset=['JOB_NAME','JOB_NUM','ATC_NAME'],inplace=True)
     df.reset_index()
@@ -273,31 +274,41 @@ def generate_input_excel_for_ml(session, input_file):
             xml_file = _download_robot_xml_file(robot_log_url, job_name, job_num, batch_name, domain_name)
             if xml_file:
                 tmp_steps1 = _retrieve_atc_parent_setup_step_from_log(xml_file, atc_name)
-                tmp_steps2 = _retrieve_atc_step_from_log(xml_file, atc_name)
+                tmp_steps2 = _retrieve_atc_step_from_log(xml_file, atc_name)    #atc step message is must
+                #use atc xml instead if fail to parse steps from output.xml
+                if not tmp_steps2:
+                    xml_file = _download_atc_xml_file(robot_log_url,atc_name)
+                    tmp_steps2 = _retrieve_atc_step_from_log(xml_file, atc_name) 
                 if tmp_steps2:
                     complete_case_steps = tmp_steps1 + tmp_steps2
                     atc_file_name = job_index + '_' + atc_name+'_ROBOT_MESSAGES.txt'
                     with open(os.path.join(LOG_DIR,atc_file_name),'w',encoding='UTF-8') as fp:
                         fp.writelines(complete_case_steps)
                     robot_log_list.append(atc_file_name)
+
+                    traffic_log_name = _download_atc_traffic_file(session,robot_log_url,job_name, job_num, batch_name, domain_name,atc_name)
+                    if traffic_log_name:
+                        traffic_steps = _retrieve_traffic_step_from_log(job_name, job_num, batch_name, domain_name,traffic_log_name)
+                        traffic_file_name = job_index + '_' + atc_name + '_TRAFFIC_MESSAGES.txt'
+                        with open(os.path.join(LOG_DIR,traffic_file_name),'w',encoding='UTF-8') as fp:
+                            fp.writelines(traffic_steps)
+                        traffic_log_list.append(traffic_file_name)
+                    else:
+                        traffic_log_list.append('None')
                 else:
                     robot_log_list.append('None')
+                    traffic_log_list.append('None')
             else:
                 robot_log_list.append('None')
-            traffic_log_name = _download_atc_traffic_file(session,robot_log_url,job_name, job_num, batch_name, domain_name,atc_name)
-            if traffic_log_name:
-                traffic_steps = _retrieve_traffic_step_from_log(job_name, job_num, batch_name, domain_name,traffic_log_name)
-                traffic_file_name = job_index + '_' + atc_name + '_TRAFFIC_MESSAGES.txt'
-                with open(os.path.join(LOG_DIR,traffic_file_name),'w',encoding='UTF-8') as fp:
-                    fp.writelines(traffic_steps)
-                traffic_log_list.append(traffic_file_name)
-            else:
                 traffic_log_list.append('None')
 
-        ti_name = job_name + '_' + job_num + '_' + atc_name
-        ti_name_list.append(ti_name)
-        ti_type_list.append(ti_type)
-        bug_id_list.append(bug_id)
+            ti_name = job_name + '_' + job_num + '_' + atc_name
+            ti_name_list.append(ti_name)
+            ti_type_list.append(ti_type)
+            bug_id_list.append(bug_id)
+
+    #for debug
+    print('list length: %d , %d, %d, %d, %d' % (len(ti_name_list), len(ti_type_list), len(bug_id_list), len(robot_log_list), len(traffic_log_list)))
 
     d = {
     'TI_NAME': ti_name_list,
@@ -344,7 +355,7 @@ def _create_robot_url_of_ti(session,job_name,job_num,batch_name,domain_name):
     }
 
     job_result_list = []
-    response = session.post(url=url_job_result,headers=HEADERS,data=data,timeout=90,verify=False)
+    response = session.post(url=url_job_result,headers=HEADERS,data=data,timeout=600,verify=False)
     job_result_list = response.json()['data']
 
     #print(job_result_list)
@@ -388,12 +399,32 @@ def _download_robot_xml_file(url,job_name,job_num,batch_name,domain_name):
 
     return output_file_name
 
+def _download_atc_xml_file(url,case_name):
+    '''
+    如果从output.xml中获取step失败，则重新下载case所对应的xml，再尝试解析
+    '''
+    parent_path = url + 'ROBOT/robot-data/ATC/'
+    output_file_name = f'{case_name}.xml'
+    target_file = parent_path + output_file_name
+
+    print(f'target atc xml file is {target_file}')
+    try:
+        print('start downloading target atc xml ...')
+        tmp_file_name = wget.download(target_file)
+        print('\ndownloading atc xml completed')
+        shutil.move(tmp_file_name,os.path.join(LOG_DIR,output_file_name))
+    except Exception as inst:
+        print('download atc xml failed, due to %s' % inst)
+        return None
+    
+    return output_file_name
+
 def _download_atc_traffic_file(session,url,job_name,job_num,batch_name,domain_name,case_name):
     '''
     下载ti对应的traffic log 以及所有的parent suite的traffic log
     '''
     robot_out_path = url + 'ROBOT'
-    response = session.get(robot_out_path,headers=HEADERS,timeout=30,verify=False)
+    response = session.get(robot_out_path,headers=HEADERS,timeout=600,verify=False)
     content = response.text
 
     #匹配traffic log所在的目录名称
@@ -407,7 +438,7 @@ def _download_atc_traffic_file(session,url,job_name,job_num,batch_name,domain_na
         return None
 
     traffic_log_path = robot_out_path + '/' + traffic_dir_name
-    response = session.get(traffic_log_path,headers=HEADERS,timeout=30,verify=False)
+    response = session.get(traffic_log_path,headers=HEADERS,timeout=600,verify=False)
     content = response.text
     parser = etree.HTMLParser(encoding='utf-8')
     tree = etree.HTML(content,parser=parser)
@@ -434,23 +465,32 @@ def _download_atc_traffic_file(session,url,job_name,job_num,batch_name,domain_na
             test_id = test_id + '.' + id
         traffic_log_name = test_id + '.html'
         traffic_log_url = traffic_log_path + '/' + traffic_log_name
-        final_log_name = job_name + '_' + job_num + '_' + batch_name + '_' + domain_name + '_' + traffic_log_name
-        if os.path.exists(os.path.join(LOG_DIR,final_log_name)):
-            print(f'target traffic log {traffic_log_name} alread exist, skip downloading')
-        elif traffic_log_name in log_name_list:
+
+        if traffic_log_name in log_name_list:
             print(f'start to download traffic log {traffic_log_name}')
             try:
                 tmp_file_name = wget.download(traffic_log_url)
-                shutil.move(tmp_file_name,os.path.join(LOG_DIR,final_log_name))
+                shutil.move(tmp_file_name,os.path.join(LOG_DIR,traffic_log_name))
             except Exception as inst:
                 print('download traffic log failed, due to %s' % inst)
                 return None
+        # final_log_name = job_name + '_' + job_num + '_' + batch_name + '_' + domain_name + '_' + traffic_log_name
+        # if os.path.exists(os.path.join(LOG_DIR,final_log_name)):
+        #     print(f'target traffic log {traffic_log_name} alread exist, skip downloading')
+        # elif traffic_log_name in log_name_list:
+        #     print(f'start to download traffic log {traffic_log_name}')
+        #     try:
+        #         tmp_file_name = wget.download(traffic_log_url)
+        #         shutil.move(tmp_file_name,os.path.join(LOG_DIR,final_log_name))
+        #     except Exception as inst:
+        #         print('download traffic log failed, due to %s' % inst)
+        #         return None
 
     print('\ndownload all traffic log completed')
 
     return traffic_log_name
 
-def _download_atc_trace_debug_file():
+def _download_atc_trace_debug_file(url):
     '''
     下载trace debug 文件(文件是batch 级别的，还需要后续处理)
     '''
@@ -584,7 +624,7 @@ def _retrieve_traffic_step_from_log(job_name,job_num,batch_name,domain_name,traf
             log_messages = tree.xpath('//text()')
             traffic_messages.extend(log_messages)
 
-    print(len(traffic_messages))
+    #print(len(traffic_messages))
 
     return traffic_messages
 
@@ -705,6 +745,10 @@ def validate_ti_reference(session,job_name,job_num,batch_name,domain_name,ml_exc
             if xml_file:
                 tmp_steps1 = _retrieve_atc_parent_setup_step_from_log(xml_file, atc_name)
                 tmp_steps2 = _retrieve_atc_step_from_log(xml_file, atc_name)
+                #use atc xml instead if fail to parse steps from output.xml
+                if not tmp_steps2:
+                    xml_file = _download_atc_xml_file(robot_log_url,atc_name)
+                    tmp_steps2 = _retrieve_atc_step_from_log(xml_file, atc_name) 
                 if tmp_steps2:
                     complete_case_steps = tmp_steps1 + tmp_steps2
                     atc_file_name = job_index + '_' + atc_name+'_ROBOT_MESSAGES.txt'
@@ -751,7 +795,7 @@ def _retrieve_known_ti(session,job_name,job_num,batch_name,domain_name):
         'username': ''
     }
 
-    response = session.get(web_url,params=params,headers=HEADERS,timeout=30,verify=False)
+    response = session.get(web_url,params=params,headers=HEADERS,timeout=600,verify=False)
     response_text = response.text.replace('null','" "')
     ti_list = eval(response_text)['data']
 
@@ -785,7 +829,7 @@ def _retrieve_new_ti(session,job_name,job_num,batch_name,domain_name):
         'username': ''
     }
 
-    response = session.get(web_url,params=params,headers=HEADERS,timeout=30,verify=False)
+    response = session.get(web_url,params=params,headers=HEADERS,timeout=600,verify=False)
     response_text = response.text.replace('null','" "')
     ti_list = eval(response_text)['data']
 
@@ -877,11 +921,11 @@ if __name__ == '__main__':
 
     session = login_sls(username, password)
 
-    tmp_excel = retrieve_history_ti_with_release(session,release_list=['22.03','6.6'], ti_nums_per_release=200)
-    # tmp_excel = generate_input_excel_for_ml(session,tmp_excel)
-    # build_ml_model(tmp_excel)
+    # tmp_excel = retrieve_history_ti_with_release(session,release_list=['22.03','6.6'], ti_nums_per_release=200)
+    tmp_excel = generate_input_excel_for_ml(session,'history_ti_list_20220415.xlsx')
+    build_ml_model(tmp_excel)
 
-    # validate_ti_reference(session,'SHA_NFXSE_FANTH_P2P_FELTC_WEEKLY_01','583','SLS_BATCH_1','','ti_list_for_ml_20220407.xlsx')
+    # validate_ti_reference(session,'SHA_NC_OLT_CFXRA_CFNTB_GPON_EONU_WEEKLY_04','94','SLS_BATCH_1','SUBMGMT','ti_list_for_ml_20220416.xlsx')
 
     print("cost %d seconds" % int(time.time() - start_time))
 
