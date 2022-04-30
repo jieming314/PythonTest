@@ -266,8 +266,7 @@ def generate_input_excel_for_ml(session, input_file):
     # print(TI_DOCUMENTS_LIST)
     new_df = pd.DataFrame(TI_DOCUMENTS_LIST,columns=['TI_Name','TI_TYPE','BUG_ID','ROBOT_LOG','TRAFFIC_LOG'])
     print('new df shape is %s' % str(new_df.shape))
-    # new_df = df.drop(new_df[new_df['ROBOT_LOG'] == 'None'].index) #remove ROBOT_LOG column为None的行
-    new_df.drop(new_df[new_df['ROBOT_LOG'] == 'None'].index,inplace=True) #remove ROBOT_LOG column为None的行
+    new_df.drop(new_df[new_df['ROBOT_LOG'] == 'None'].index,inplace=True) #remove ROBOT_LOG columnÎªNoneµÄÐÐ
     new_df.reset_index()
     print('new df shape after drop is %s' % str(new_df.shape))
     print('generate excel for ml...')
@@ -755,58 +754,88 @@ def _retrieve_traffic_step_from_log(job_name,job_num,batch_name,domain_name,traf
     print(len(traffic_messages))
     return traffic_messages
 
+class Read_File(object):
+    '''
+    This class is used to read all the documents for machine learning
+    return a python generator to save memory
+    '''
+    def __init__(self, input_file):
+        self.input_file = os.path.join(LOG_DIR,input_file)
+        self.file_list = []
+        self.stop_word_list = ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his',
+            'himself', 'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 
+            'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having',
+            'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for',
+            'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from',
+            'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
+            'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
+            'can', 'will', 'just', 'don', 'now']
+        if os.path.exists(self.input_file):
+            df = pd.read_excel(self.input_file,engine='openpyxl')
+            for index, row in df.iterrows():
+                t= (row['ROBOT_LOG'], row['TRAFFIC_LOG'])
+                self.file_list.append(t)
+        else:
+            print(f'{self.input_file} does not exist...')
+        # print('file name list is %s' % str(self.file_list))
+    
+    def _text_process(self,text):
+        '''
+        line is a str, return a list
+        '''
+        text = text.replace('\t',' ')
+        text = text.replace('\n',' ')
+        text = text.replace('\r\n',' ')
+        text = text.replace('\r',' ')
+        text = text.replace('&nbsp',' ')
+        return text
+
+    def __iter__(self):
+        for each in self.file_list:
+            log_text = ''
+            robot_log_file = os.path.join(LOG_DIR,each[0])
+            if os.path.exists(robot_log_file):
+                with open(robot_log_file, 'r', encoding='utf-8') as fp:
+                    log_text = fp.read()
+            if each[1] != 'None':
+                traffic_log_file = os.path.join(LOG_DIR,each[1])
+                if os.path.exists(traffic_log_file):
+                    with open(traffic_log_file, 'r', encoding='utf-8') as fp:
+                        log_text += fp.read()
+            tmp_list = [x for x in self._text_process(log_text).split(' ') if x] # split the text into a list
+            yield [x for x in tmp_list if x.lower() not in self.stop_word_list] #remove stop words
+
+def _create_corpus(dictionary, file_texts):
+    '''
+    create corpus according to file_texts
+    return a generator to save memory
+    '''
+    for each in file_texts:
+        yield dictionary.doc2bow(each)
+
 def build_ml_model(file_name):
     '''
-    根据输入的excel创建和训练ML模型
+    traing model according to input excel
     '''
     print('start to build LSI mode')
     excel_file = os.path.join(LOG_DIR,file_name)
     if not os.path.exists(excel_file):
         print(f'cannot find {file_name} under {LOG_DIR}, pls check...')
         return
-
-    df = pd.read_excel(excel_file,engine='openpyxl')
-    for index, row in df.iterrows():
-        robot_messages_file = row['ROBOT_LOG']
-        traffic_messages_file = row['TRAFFIC_LOG']
-        robot_texts = _retrieve_text_in_message_file(robot_messages_file)
-        traffic_texts = _retrieve_text_in_message_file(traffic_messages_file)
-        case_texts = robot_texts + traffic_texts
-        DOCUMENTS.append(case_texts)
     
-    stoplist = ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his',
-                'himself', 'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 
-                'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having',
-                'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for',
-                'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down',
-                'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
-                'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's',
-                't', 'can', 'will', 'just', 'don', 'should', 'now']
-
-    #remove stop word
-    texts = [[word for word in document if word.lower() not in stoplist] for document in DOCUMENTS]
-    
-    #remove tokens below or above some TF level
-    frequency = defaultdict(int)
-    for text in texts:
-        for token in text:
-            frequency[token] += 1
-    texts = [[token for token in text if frequency[token] >1] for text in texts]
-
-    # Build dictionary bag
+    print('start to create dictionary and corpus')
+    documents_text = Read_File(excel_file)
     no_below_number=2
     no_above_rate=0.7
-    dictionary = corpora.Dictionary(texts)
+    dictionary = corpora.Dictionary(documents_text)
     dictionary.filter_extremes(no_below=no_below_number,no_above=no_above_rate,keep_n=600000)
     dictionary.compactify()
     dictionary.save_as_text(os.path.join(COMP_DIR,'auto_ti.dict'))
-
-    # Build Corpus
-    corpus = [dictionary.doc2bow(text) for text in texts]
-    # Save Corpus to disk
+    corpus = _create_corpus(dictionary, documents_text)
+    corpus = list(corpus)
     corpora.MmCorpus.serialize(os.path.join(COMP_DIR,'auto_ti_corpus.mm'), corpus)
 
-    # Build LSI mode based on TFIDF vector
+    print('start to train model')
     tfidf = models.TfidfModel(corpus)
     tfidf.save(os.path.join(COMP_DIR,'auto_ti_tfidf.ti'))
     corpus_tfidf = tfidf[corpus]
@@ -814,37 +843,13 @@ def build_ml_model(file_name):
     numtopics=500
     lsi = models.LsiModel(corpus_tfidf, id2word=dictionary, num_topics=numtopics)
     lsi.save(os.path.join(COMP_DIR,'auto_ti_lis_mode.mo'))
-    lsi.print_topics(numtopics)
+    # lsi.print_topics(numtopics)
 
     # Build index with LSI index
     index = similarities.MatrixSimilarity(lsi[corpus])
     index.save(os.path.join(COMP_DIR,'auto_ti_lsi_index.ind'))
 
     print('LSI mode building complete')
-
-def _retrieve_text_in_message_file(file_name):
-    '''
-    把file 中的文本转换为word list
-    used by build_ml_model()
-    '''
-    document_texts = []
-    if file_name != 'None':
-        with open(os.path.join(LOG_DIR,file_name),'r') as fp:
-            content = fp.readlines()
-    else:
-        return document_texts
-
-    for each in content:
-        each = each.replace('\t',' ')
-        each = each.replace('\n',' ')
-        each = each.replace('\r\n',' ')
-        each = each.replace('\r',' ')
-        each = each.replace('&nbsp',' ')
-        document_texts.extend(each.split(' '))
-    
-    document_texts = [each for each in document_texts if each]
-    #print(document_texts)
-    return document_texts
 
 def validate_ti_reference_by_job(session,job_name,job_num,batch_name,domain_name,ml_excel):
     '''
@@ -929,7 +934,7 @@ def validate_ti_reference_by_job(session,job_name,job_num,batch_name,domain_name
     else:
         print(f'cannot find robot url for {job_index}')
 
-    print('analyzed totally %d TIs, matched %d TIs' % (int(ana_num), int(match_num)))
+    print('total TI number: %d, analyzed %d TIs, matched %d TIs' % (total_num, int(ana_num), int(match_num)))
     print('reference accurucy is %f' % (match_num/ana_num,))
 
 def _retrieve_known_ti_by_job(session,job_name,job_num,batch_name,domain_name):
@@ -968,6 +973,140 @@ def validate_ti_reference_by_build(session,build_id,ml_excel):
     '''
     _retrieve_known_ti_by_build(session,build_id)
 
+    #read ml excel to refer bug type
+    df = pd.read_excel(os.path.join(LOG_DIR,ml_excel),engine='openpyxl')
+    history_ti_dict = df.T.to_dict('list')
+
+    #download all needed output.xml
+    _download_robot_xml_file_mp(session,ti_list=BUILD_KNOWN_TI_LIST)
+
+    match_num = 0.0
+    ana_num = 0.0 # count analyzed ti number
+    total_num = len(BUILD_KNOWN_TI_LIST)
+
+    #dict to pandas df
+    ti_name_list = []
+    ti_type_list =[] # recommended ti type
+    match_list = []
+    ref_bug_list = [] # referenced ti type
+    ref_bug_status_list = []
+
+    iter_count = 0
+    for each_ti in BUILD_KNOWN_TI_LIST:
+        job_name = each_ti['parentPlatform']
+        job_num = str(each_ti['jobNum'])
+        batch_name = each_ti['batchName']
+        domain_name = each_ti['domainName']
+        atc_name = each_ti['ATCName']
+        atc_bug_type = each_ti['TIType']
+
+        job_index = job_name+ '_' + job_num + '_' + batch_name+ '_'  + domain_name
+        ti_name = job_index + '_' + atc_name
+        robot_log_url = ROBOT_LOG_URL_DICT.get(job_index,'')
+        xml_file = job_index + '_output.xml'
+
+        iter_count +=1
+        if robot_log_url and os.path.exists(os.path.join(LOG_DIR,xml_file)):
+            print(f'{iter_count} of {total_num}')
+            print('*'*5 +job_index + ':' + ' '*4 + atc_name + '*'*5)
+            file_list_to_reference = []
+
+            ti_name_list.append(ti_name)
+            if atc_name.startswith('setup:'):
+                atc_name = atc_name.lstrip('setup:')
+                ti_name = ti_name.replace(':','_')
+                tmp_steps = _retrieve_kw_step_from_log(xml_file,atc_name)
+                if tmp_steps:
+                    atc_file_name = ti_name +'_ROBOT_MESSAGES.txt'
+                    with open(os.path.join(LOG_DIR,atc_file_name),'w',encoding='UTF-8') as fp:
+                        fp.writelines(tmp_steps)
+                    file_list_to_reference.append(atc_file_name)
+            elif atc_name.startswith('teardown:'):
+                atc_name = atc_name.lstrip('teardown:')
+                ti_name = ti_name.replace(':','_')
+                tmp_steps = _retrieve_kw_step_from_log(xml_file,atc_name,kw_type='teardown')
+                if tmp_steps:
+                    atc_file_name = ti_name +'_ROBOT_MESSAGES.txt'
+                    with open(os.path.join(LOG_DIR,atc_file_name),'w',encoding='UTF-8') as fp:
+                        fp.writelines(tmp_steps)
+                    file_list_to_reference.append(atc_file_name)
+            else:
+                tmp_steps1 = _retrieve_atc_parent_setup_step_from_log(xml_file, atc_name)
+                tmp_steps2 = _retrieve_atc_step_from_log(xml_file, atc_name)
+                #use atc xml instead if fail to parse steps from output.xml
+                if not tmp_steps2:
+                    xml_file = _download_atc_xml_file(robot_log_url,job_name, job_num, batch_name, domain_name,atc_name)
+                    tmp_steps2 = _retrieve_atc_step_from_log(xml_file, atc_name) 
+                if tmp_steps1 or tmp_steps2:
+                    complete_case_steps = tmp_steps1 + tmp_steps2
+                    atc_file_name = ti_name +'_ROBOT_MESSAGES.txt'
+                    with open(os.path.join(LOG_DIR,atc_file_name),'w',encoding='UTF-8') as fp:
+                        fp.writelines(complete_case_steps)
+                    file_list_to_reference.append(atc_file_name)
+
+                    traffic_log_name = _download_atc_traffic_file(session,robot_log_url,job_name, job_num, batch_name, domain_name,atc_name)
+                    if traffic_log_name:
+                        traffic_steps = _retrieve_traffic_step_from_log(job_name, job_num, batch_name, domain_name,traffic_log_name)
+                        traffic_file_name = ti_name + '_TRAFFIC_MESSAGES.txt'
+                        with open(os.path.join(LOG_DIR,traffic_file_name),'w',encoding='UTF-8') as fp:
+                            fp.writelines(traffic_steps)
+                        file_list_to_reference.append(traffic_file_name)
+            
+            sims_list = _sims_compare(file_list_to_reference)
+            if sims_list:
+                ana_num +=1
+                rec_ti_type = _reference_method_2(sims_list, history_ti_dict)
+                ti_type_list.append(rec_ti_type)
+                if atc_bug_type == rec_ti_type:
+                    match_num += 1
+                    match_list.append('1')
+                    print(f'actual ti type: {atc_bug_type}, recomended ti type: {rec_ti_type}, MATCH')
+                else:
+                    match_list.append('0')
+                    print(f'actual ti type: {atc_bug_type}, recomended ti type: {rec_ti_type}, NOT MATCH')
+            else:
+                match_list.append('None')
+                print(f'cannot recommend ti type for {atc_name} due to no query document')
+
+        else:
+            print(f'cannot find ROBOT log url or required xml file does not exist for TI: {ti_name}')
+    
+    print('total TI number: %d, analyzed %d TIs, matched %d TIs' % (total_num, int(ana_num), int(match_num)))
+    print('reference accurucy is %f' % (match_num/ana_num,))
+    
+    #export result to Excel
+    d = {
+    'TI_NAME': ti_name_list,
+    'TI_TYPE': ti_type_list,
+    'MATCH': match_list,
+    }
+
+    new_df = pd.DataFrame(data=d)
+    print('new df shape is %s' % str(new_df.shape))
+
+    #use xlsxwriter to write xlsx
+    file_name = 'validate_ti_build_result_{}.xlsx'.format(time.strftime('%Y%m%d'))
+    sheet_name = 'Result'
+    writer = pd.ExcelWriter(file_name, engine='xlsxwriter')
+    new_df.to_excel(writer,index=False,sheet_name=sheet_name)
+
+    workbook  = writer.book
+    worksheet = writer.sheets[sheet_name]
+    format1 = workbook.add_format({'text_wrap': True,'border': 1,'align': 'left'})
+    worksheet.set_column('A:A', 50, format1)
+    worksheet.set_column('B:C', 10, format1)
+    writer.save()
+    print('excel for ti validation completed...')
+
+    shutil.move(file_name,os.path.join(LOG_DIR,file_name))
+
+def validate_ti_reference_by_build_bak(session,build_id,ml_excel):
+    '''
+    验证一个build 的 ti 预测结果
+    废弃
+    '''
+    _retrieve_known_ti_by_build(session,build_id)
+
     match_num = 0.0
     ana_num = 0.0 # count analyzed ti number
     total_num = len(BUILD_KNOWN_TI_LIST)
@@ -981,9 +1120,9 @@ def validate_ti_reference_by_build(session,build_id,ml_excel):
 
     #dict to pandas df
     ti_name_list = []
-    ref_ti_list =[]
+    ti_type_list =[] # recommended ti type
     match_list = []
-    ref_bug_list = []
+    ref_bug_list = [] # referenced ti type
     ref_bug_status_list = []
 
     iter_count = 0
@@ -1036,7 +1175,7 @@ def validate_ti_reference_by_build(session,build_id,ml_excel):
             if sims_list:
                 ana_num +=1
                 ref_ti_type = _reference_method_2(sims_list, history_ti_dict)
-                ref_ti_list.append(ref_ti_type)
+                ti_type_list.append(ref_ti_type)
                 if atc_bug_type == ref_ti_type:
                     match_num += 1
                     match_list.append('1')
@@ -1045,6 +1184,7 @@ def validate_ti_reference_by_build(session,build_id,ml_excel):
                     match_list.append('0')
                     print(f'actual ti type: {atc_bug_type}, recomended ti type: {ref_ti_type}, NOT MATCH')
             else:
+                ti_type_list.append('None')
                 match_list.append('None')
                 print(f'cannot recommend ti type for {atc_name} due to no query document')
         else:
@@ -1056,7 +1196,7 @@ def validate_ti_reference_by_build(session,build_id,ml_excel):
     #export result to Excel
     d = {
     'TI_NAME': ti_name_list,
-    'TI_TYPE': ref_ti_list,
+    'TI_TYPE': ti_type_list,
     'MATCH': match_list,
     }
 
@@ -1121,7 +1261,6 @@ def _sims_compare(query0,qtype='FileList'):
             if os.path.exists(file_path):
                 with open(file_path,'r') as fp:
                     content = fp.readlines()
-                    print(len(content))
                 for line in content:
                     line = line.replace('\t',' ')
                     line = line.replace('\n',' ')
@@ -1136,14 +1275,10 @@ def _sims_compare(query0,qtype='FileList'):
     else:
         query=str(query0).strip() #未测试
 
-    print(len(query))
     if query:
         query_bow = dictionary.doc2bow(query)
-        #print(query_bow)
         query_lsi = lsi[query_bow]
-        print(query_lsi)
         sims = index[query_lsi]
-        print(sims)
         sort_sims = sorted(enumerate(sims), key=lambda x: x[1], reverse=True)
     else:
         print('no input document to query')
@@ -1205,24 +1340,50 @@ def _reference_method_2(sims_list,history_ti_dict):
     return res
 
 if __name__ == '__main__':
-    
+
+    from optparse import OptionParser
+    import sys
+
+    parser = OptionParser()
+    parser.add_option("-t","--validtionType", dest="type",default='job', help="validate by job or build")
+    parser.add_option("-i","--inputParameters", dest="params",default='', help="input validate parameters")
+    parser.add_option("-u","--username", dest="username",default='', help="CSL")
+    parser.add_option("-p","--passwd", dest="passwd",default='', help="Password")
+
+    (options, args) = parser.parse_args(sys.argv[1:])
+    username = options.username
+    passwd = options.passwd
+    ValidationType = options.type.strip()
+    params = options.params.strip()
+    validOptions = [ValidationType,params,username,passwd]
+
     start_time = time.time()
-
-    #for debug
-    username = 'jieminbz'
-    password = 'Jim#2346'
-
-    session = login_sls(username, password)
-
-    # tmp_excel = retrieve_history_ti_by_release(session,'22.03')    # 10 history entries per job per ti type
-    # tmp_excel = generate_input_excel_for_ml(session,'history_ti_list_20220425.xlsx')
-    # build_ml_model(tmp_excel)
-
-    validate_ti_reference_by_job(session,'SHA_NC_OLT_NFXSE_FANTF_REDUND_FGLTB_WEEKLY_01','618','SLS_BATCH_1','REDUN','ti_list_for_ml_20220427_baseline.xlsx')
-
-    # validate_ti_reference_by_build(session,'2206.225','ti_list_for_ml_20220427_baseline.xlsx')
-
-
+    if all(validOptions):
+        print('validate model...')
+        session = login_sls(username, passwd)
+        if ValidationType == 'job':
+            params_list = params.split(' ')
+            job_name = params_list[0]
+            job_num = params_list[1]
+            batch_name = params_list[2]
+            domain_name = params_list[3]
+            validate_ti_reference_by_job(session,job_name,job_num,batch_name,domain_name,'ti_list_for_ml_20220427_baseline.xlsx')
+        elif ValidationType == 'build':
+            build_id = params.split(' ')[0]
+            validate_ti_reference_by_build(session,build_id,'ti_list_for_ml_20220427_baseline.xlsx')
+        else:
+            print('error, please input correct parameters')
+    else:
+        print('training model phase...')
+        # import logging
+        # logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.DEBUG)
+        # session = login_sls(username, passwd)
+        # tmp_excel = retrieve_history_ti_by_release(session,'22.03')    # 10 history entries per job per ti type
+        # tmp_excel = generate_input_excel_for_ml(session,'history_ti_list_20220425.xlsx')
+        # build_ml_model(tmp_excel)
+        # validate_ti_reference_by_job(session,'LSFX_NFXSE_FANTF_FGLTB_GPON_EONUAV_WEEKLY_02','75','SLS_BATCH_1','L2FWD','ti_list_for_ml_20220427_baseline.xlsx')
+        # validate_ti_reference_by_build(session,'2206.225','ti_list_for_ml_20220427_baseline.xlsx')
     print("cost %d seconds" % int(time.time() - start_time))
+
 
 
