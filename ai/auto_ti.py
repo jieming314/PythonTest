@@ -16,18 +16,19 @@ COMP_DIR = 'AI_COMP'    #store ml components
 ROBOT_LOG_URL_DICT = {} #store robot url path of a job index
 ROBOT_JOB_RESULT_DICT = {} #store job result of a build or release
 TI_DOCUMENTS_LIST = [] #used by _mycallback_ti_documents() to store ti info for ml excel
-STOP_WORD_LIST = ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', "you're", "you've", "you'll", "you'd", 'your',
+COMM_STOP_WORD_LIST = ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', "you're", "you've", "you'll", "you'd", 'your',
     'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', "she's", 'her', 'hers', 'herself', 'it', "it's",
     'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', "that'll",
-    'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did',
+    'these', 'those', 'have', 'has', 'had', 'having',
     'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about',
-    'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on',
-    'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
-    'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too',
-    'very', 's', 't', 'can', 'will', 'just', 'don', "don't", 'should', "should've", 'now', 'd', 'll', 'm', 'o', 're', 've', 'y', 'ain',
-    'aren', "aren't", 'couldn', "couldn't", 'didn', "didn't", 'doesn', "doesn't", 'hadn', "hadn't", 'hasn', "hasn't", 'haven', "haven't",
-    'isn', "isn't", 'ma', 'mightn', "mightn't", 'mustn', "mustn't", 'needn', "needn't", 'shan', "shan't", 'shouldn',
-    "shouldn't", 'wasn', "wasn't", 'weren', "weren't", 'won', "won't", 'wouldn', "wouldn't"]
+    'against', 'into', 'through', 'during', 'before', 'after', 'to', 'from',
+    'again', 'further', 'then', 'here', 'there', 'when', 'where', 'why', 'how',
+    'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'nor', 'own', 'so', 'than', 'too',
+    'very', 'can', 'will', 'just', 'don', 'now', 'd', 'll', 'm', 'o', 're', 've', 'y', 'ain',
+    'aren', "aren't", 'couldn',
+    'ma', 'mightn', "mightn't", 'shan', "shan't"]
+CUST_STOP_WORD_LIST = ['span','color', 'xmlns','get','filter','rpc-reply','rpc','name','interface','interfaces-state','device-manager',
+    'device', 'alarms', 'alarm-list', 'device-specific-data']
 
 #create directory for downloaded logs and generated corpus of machine learning
 if not os.path.exists(LOG_DIR):
@@ -168,9 +169,10 @@ def generate_input_excel_for_ml(input_file):
     df = pd.read_excel(os.path.join(LOG_DIR,input_file),engine='openpyxl')
     print('source entry num from input is %d' %len(df))
     df.dropna(subset=['JOB_NAME','JOB_NUM','ATC_NAME','BUILD_ID','CS_ID','TEST_RESULT','FIX_VERSION','BUG_ID','BUG_STATUS'],inplace=True)
-    df.reset_index(drop=True,inplace=True)
+    # df.reset_index(drop=True,inplace=True)
     df.fillna('',inplace=True)
-    df.drop_duplicates(subset=['JOB_NAME','JOB_NUM','ATC_NAME','BATCH_NAME','DOMAIN_NAME'],inplace=True)
+    df.sort_values(by=['TI_ID'],inplace=True)
+    df.drop_duplicates(subset=['JOB_NAME','JOB_NUM','BATCH_NAME','DOMAIN_NAME','BUG_ID'],inplace=True)
     df.reset_index(drop=True,inplace=True)
     print('entry num after process is %d' %len(df))
     print('start to generate excel for ml...')
@@ -441,13 +443,19 @@ def _retrieve_failed_step_from_xml(file_name,atc_name='',kw_name='',kw_type='set
         return test_messages
 
     for each in kw_tags:
-        kw_result = each.xpath('./status/@status')[0]
-        if kw_result != 'PASS':
-            failed_kw_tags.append(each)
+        try:
+            kw_name = each.xpath('./@name')[0]
+            kw_result = each.xpath('./status/@status')[0]
+            if kw_result != 'PASS':
+                failed_kw_tags.append(each)
+        except Exception as inst:
+            print(f'fail to fetch failed kw tags for {atc_name} due to {inst}')
 
+    p = re.compile(r'Test timeout [0-9]+ hours active. [0-9]+\.[0-9]+ seconds left\.')  # remove the first debug message of kw
     for kw_tag in failed_kw_tags:
         #first level kw name + args
         kw_name = kw_tag.xpath('./@name')[0]
+        kw_name = kw_name.replace(' ', '_')
         # print(f'kw name is {kw_name}')
         kw_args = kw_tag.xpath('./arguments//text()')
         # print(kw_args)
@@ -460,34 +468,32 @@ def _retrieve_failed_step_from_xml(file_name,atc_name='',kw_name='',kw_type='set
             test_messages.append(kw_name + '\n')
         kw_msg_tags = kw_tag.xpath('./msg')
         for kw_msg_tag in kw_msg_tags:
-            tmp_msg = kw_msg_tag.xpath('./text()')
-            if tmp_msg:
-                tmp_msg = tmp_msg[0] + '\n'
-            test_messages.append(tmp_msg)
+            try:
+                tmp_msg = kw_msg_tag.xpath('./text()')[0]
+                if tmp_msg and not(p.search(tmp_msg)):
+                    test_messages.append(tmp_msg + '\n')
+            except:
+                pass
 
-        #child kw + args + msg
         child_kw_tags = kw_tag.xpath('.//kw')
-        # print('child kw tags:')
-        # print(child_kw_tags)
-
         for child_kw in child_kw_tags:
             child_kw_name = child_kw.xpath('./@name')[0]
-            # print(child_kw_name)
+            child_kw_name = child_kw_name.replace(' ', '_')
             child_kw_arg = child_kw.xpath('./arguments//text()')
             if child_kw_arg:
                 child_kw_arg = [each for each in child_kw_arg if each != '\r\n']
                 child_kw_arg = [each for each in child_kw_arg if each != '\n']
-                #print(kw_args)
                 test_messages.append(child_kw_name + ' '*4 + " ".join(child_kw_arg) + '\n')
             else:
                 test_messages.append(child_kw_name + '\n')
-            # print(child_kw_arg)
             child_kw_msg_tags = child_kw.xpath('./msg')
             for child_kw_msg_tag in child_kw_msg_tags:
-                tmp_msg = child_kw_msg_tag.xpath('./text()')
-                if tmp_msg:
-                    tmp_msg = tmp_msg[0] + '\n'
-                test_messages.append(tmp_msg)
+                try:
+                    tmp_msg = child_kw_msg_tag.xpath('./text()')[0]
+                    if tmp_msg and not(p.search(tmp_msg)):
+                        test_messages.append(tmp_msg + '\n')
+                except:
+                    pass
 
     test_messages = [each for each in test_messages if each]
 
@@ -512,6 +518,7 @@ def _retrieve_failed_parent_step_from_xml(file_name,atc_name):
         print('cannot fetch test id for %s due to %s, fail to retrieve parent setup steps' % (atc_name,inst))
         return test_messages
 
+    p = re.compile(r'Test timeout [0-9]+ hours active. [0-9]+\.[0-9]+ seconds left\.')  # remove the first debug message of kw
     for i in range(1,len(test_id_list)):
         test_id = '-'.join(test_id_list[:-i])
         suite_tag = tree.xpath(f'//suite[@id="{test_id}"]')[0]
@@ -526,6 +533,7 @@ def _retrieve_failed_parent_step_from_xml(file_name,atc_name):
             for kw_tag in failed_kw_tags:
                 #first level kw name + args
                 kw_name = kw_tag.xpath('./@name')[0]
+                kw_name = kw_name.replace(' ', '_')
                 kw_args = kw_tag.xpath('./arguments//text()')
                 if kw_args:
                     kw_args = [each for each in kw_args if each != '\r\n']
@@ -536,15 +544,18 @@ def _retrieve_failed_parent_step_from_xml(file_name,atc_name):
                     test_messages.append(kw_name + '\n')
                 kw_msg_tags = kw_tag.xpath('./msg')
                 for kw_msg_tag in kw_msg_tags:
-                    tmp_msg = kw_msg_tag.xpath('./text()')
-                    if tmp_msg:
-                        tmp_msg = tmp_msg[0] + '\n'
-                    test_messages.append(tmp_msg)
+                    try:
+                        tmp_msg = kw_msg_tag.xpath('./text()')[0]
+                        if tmp_msg and not(p.search(tmp_msg)):
+                            test_messages.append(tmp_msg + '\n')
+                    except:
+                        pass
 
                 #child kw + args + msg
                 child_kw_tags = kw_tag.xpath('.//kw')
                 for child_kw in child_kw_tags:
                     child_kw_name = child_kw.xpath('./@name')[0]
+                    child_kw_name = child_kw_name.replace(' ', '_')
                     child_kw_arg = child_kw.xpath('./arguments//text()')
                     if child_kw_arg:
                         child_kw_arg = [each for each in child_kw_arg if each != '\r\n']
@@ -554,10 +565,12 @@ def _retrieve_failed_parent_step_from_xml(file_name,atc_name):
                         test_messages.append(child_kw_name + '\n')
                     child_kw_msg_tags = child_kw.xpath('./msg')
                     for child_kw_msg_tag in child_kw_msg_tags:
-                        tmp_msg = child_kw_msg_tag.xpath('./text()')
-                        if tmp_msg:
-                            tmp_msg = tmp_msg[0] + '\n'
-                        test_messages.append(tmp_msg)
+                        try:
+                            tmp_msg = child_kw_msg_tag.xpath('./text()')[0]
+                            if tmp_msg and not(p.search(tmp_msg)):
+                                test_messages.append(tmp_msg + '\n')
+                        except:
+                            pass
             break
 
     print(len(test_messages))
@@ -637,7 +650,7 @@ class Read_File(object):
     def __init__(self, input_file):
         self.input_file = input_file
         self.file_list = []
-        self.stop_word_list = STOP_WORD_LIST
+        self.stop_word_list = COMM_STOP_WORD_LIST + CUST_STOP_WORD_LIST
 
         if os.path.exists(self.input_file):
             df = pd.read_excel(self.input_file,engine='openpyxl')
@@ -651,13 +664,42 @@ class Read_File(object):
     
     def _text_process(self,text):
         '''
-        line is a str, return a list
+        input 'text' is a string
         '''
+        text = text.lower()
         text = text.replace('\t',' ')
         text = text.replace('\n',' ')
         text = text.replace('\r\n',' ')
         text = text.replace('\r',' ')
         text = text.replace('&nbsp',' ')
+        text = text.replace(',',' ')
+        text = text.replace('|',' ')
+        text = text.replace("'u",' ')
+        text = text.replace('"',' ')
+        text = text.replace("'",' ')
+        text = text.replace('{',' ')
+        text = text.replace('}',' ')
+        text = text.replace(':',' ')
+        text = text.replace('$',' ')
+        text = text.replace('&',' ')
+        text = text.replace('(',' ')
+        text = text.replace(')',' ')
+        text = text.replace('>',' ')
+        text = text.replace('<',' ')
+        text = text.replace('/',' ')
+        text = text.replace('!',' ')
+        text = text.replace('#',' ')
+        text = text.replace('=',' ')
+        text = text.replace('-',' ')
+        text = text.replace('*',' ')
+        text = text.replace('[',' ')
+        text = text.replace(']',' ')
+        text = text.replace(';',' ')
+        text = text.replace('..',' ')
+        text = text.replace('...',' ')
+        text = text.replace('....',' ')
+        text = text.replace('.....',' ')
+        text = text.replace('......',' ')
         return text
 
     def __iter__(self):
@@ -673,7 +715,12 @@ class Read_File(object):
             #         with open(traffic_log_file, 'r', encoding='utf-8') as fp:
             #             log_text += fp.read()
             tmp_list = [x for x in self._text_process(log_text).split(' ') if x] # split the combined text into a list
-            yield [x for x in tmp_list if x.lower() not in self.stop_word_list] #remove stop words
+            tmp_list = [x for x in tmp_list if x not in self.stop_word_list]         #remove stop words
+            tmp_list = [x for x in tmp_list if re.search(r'[a-z]', x)]        #remove words does not contain any letters
+            tmp_list = [x for x in tmp_list if not re.search(r'^0x[a-f0-9]+', x)]   #remove hex string
+            tmp_list = [x.rstrip('.') for x in tmp_list]
+
+            yield tmp_list
 
 def _create_corpus(dictionary, file_texts):
     '''
@@ -696,7 +743,7 @@ def build_ml_model(file_name):
     print('start to create dictionary and corpus')
     documents_text = Read_File(excel_file)
     no_below_number=2
-    no_above_rate=0.7
+    no_above_rate=0.8
     dictionary = corpora.Dictionary(documents_text)
     dictionary.filter_extremes(no_below=no_below_number,no_above=no_above_rate,keep_n=600000)
     dictionary.compactify()
@@ -811,7 +858,7 @@ def validate_ti_reference_by_job(job_name,job_num,batch_name,domain_name,build_i
                 print(f'cannot recommend ti type for {atc_name} due to no query document')
 
     else:
-        print(f'cannot find ROBOT log url or required xml file does not exist for TI: {ti_name}')
+        print(f'cannot find ROBOT log url or required xml file does not exist for TI')
     
     print('total TI number: %d, analyzed %d TIs, matched %d TIs' % (total_num, int(ana_num), int(match_num)))
     print('reference accurucy is %f' % (match_num/ana_num,))
@@ -1089,13 +1136,46 @@ def _sims_compare(query0,qtype='FileList'):
                 with open(file_path,'r') as fp:
                     content = fp.readlines()
                 for line in content:
+                    line = line.lower()
                     line = line.replace('\t',' ')
                     line = line.replace('\n',' ')
                     line = line.replace('\r\n',' ')
                     line = line.replace('\r',' ')
                     line = line.replace('&nbsp',' ')
+                    line = line.replace(',',' ')
+                    line = line.replace('|',' ')
+                    line = line.replace("'u",' ')
+                    line = line.replace('"',' ')
+                    line = line.replace("'",' ')
+                    line = line.replace('{',' ')
+                    line = line.replace('}',' ')
+                    line = line.replace(':',' ')
+                    line = line.replace('$',' ')
+                    line = line.replace('&',' ')
+                    line = line.replace('(',' ')
+                    line = line.replace(')',' ')
+                    line = line.replace('>',' ')
+                    line = line.replace('<',' ')
+                    line = line.replace('/',' ')
+                    line = line.replace('!',' ')
+                    line = line.replace('#',' ')
+                    line = line.replace('=',' ')
+                    line = line.replace('-',' ')
+                    line = line.replace('*',' ')
+                    line = line.replace('[',' ')
+                    line = line.replace(']',' ')
+                    line = line.replace(';',' ')
+                    line = line.replace('..',' ')
+                    line = line.replace('...',' ')
+                    line = line.replace('....',' ')
+                    line = line.replace('.....',' ')
+                    line = line.replace('......',' ')
                     tmp_list = [x for x in line.split(' ') if x]
-                    tmp_list = [x for x in tmp_list if x.lower() not in STOP_WORD_LIST]
+                    tmp_list = [x for x in tmp_list if x not in COMM_STOP_WORD_LIST]
+                    tmp_list = [x for x in tmp_list if x not in CUST_STOP_WORD_LIST]
+                    tmp_list = [x for x in tmp_list if re.search(r'[a-z]', x)]        #remove words does not contain any letters
+                    tmp_list = [x for x in tmp_list if not re.search(r'^0x[a-f0-9]+', x)]   #remove hext string
+                    tmp_list = [x.strip('.') for x in tmp_list]
                     query.extend(tmp_list)
             else:
                 print(f'cannot find {file_path}')
@@ -1158,7 +1238,11 @@ def _return_ti_type_by_fix_version(fix_version):
     else:
         return 'SW'
 
-def retrieve_history_ti_by_build_list(build_id_list,keep_num=800,fetch_num=2000):
+def retrieve_history_ti_by_build_list(build_id_list,keep_num=None,fetch_num=None):
+    '''
+    keep_num:  total ti number returned by this method
+    fetch_num: number of fetched TI in one SQL query of each build
+    '''
     history_ti_list = []
     moswa_job_list = _get_job_names_from_file('MOSWA_JOB_NAME.txt')
     
@@ -1174,7 +1258,9 @@ def retrieve_history_ti_by_build_list(build_id_list,keep_num=800,fetch_num=2000)
             with connection.cursor() as cursor:
                 sql = "SELECT id,jobName,jobNum,ATCName,batchName,DomainName,buildID,testCS,testResult,frId,frClassify \
                     FROM testATCResults WHERE testResult != 'PASS' and buildID = %s and frClassify in ('SW','ATC','ENV','SW-ONT') \
-                    ORDER by id DESC LIMIT 0,%s" % (build_id, fetch_num)
+                    ORDER by id DESC" % build_id
+                if fetch_num:
+                    sql += ' LIMIT 0,%s' % fetch_num
                 try:
                     tmp_ti_list = []
                     cursor.execute(sql)
@@ -1184,7 +1270,8 @@ def retrieve_history_ti_by_build_list(build_id_list,keep_num=800,fetch_num=2000)
 
         print(len(tmp_ti_list))
         tmp_ti_list = [each for each in tmp_ti_list if each[1] in moswa_job_list]   #remove entries not in moswa batch job
-        tmp_ti_list = tmp_ti_list[:keep_num]    #only return keep_num entries
+        if keep_num:
+            tmp_ti_list = tmp_ti_list[:keep_num]    #only return keep_num entries
         print(len(tmp_ti_list))
         history_ti_list += tmp_ti_list
 
@@ -1198,18 +1285,17 @@ if __name__ == '__main__':
     '''
     start_time = time.time()
 
-    build_id_list = ['2206.235','2206.233','2206.231','2206.229','2206.227','2206.225','2206.223','2206.221','2206.217','2206.215', '2206.213',
-                     '2203.106','2203.102','2203.101','2203.098','2203.096','2203.094','2203.092','2203.090','2203.088','2203.086']
+    build_id_list = ['2206.260', '2206.256', '2206.254','2206.252', '2206.250','2206.248','2206.246', '2206.244','2206.241',
+        '2206.235','2206.233','2206.231','2206.229','2206.227','2206.225','2206.223','2206.221','2206.217','2206.215', '2206.213',
+        '2203.106','2203.102','2203.101','2203.098','2203.096','2203.094','2203.092','2203.090','2203.088','2203.086']
 
-    retrieve_history_ti_by_build_list(build_id_list)
-
-    # tmp_excel = retrieve_history_ti_from_db(release_id='22.03',keep_num=8000)    # 10 history entries per job per ti type
-    # tmp_excel = generate_input_excel_for_ml(tmp_excel)
-    # build_ml_model(tmp_excel)
+    tmp_excel = retrieve_history_ti_by_build_list(build_id_list)
+    tmp_excel = generate_input_excel_for_ml(tmp_excel)
+    build_ml_model(tmp_excel)
 
     # validate_ti_reference_by_job('LSFX_NFXSD_FANTG_FGLTD_GPON_EONUAV_WEEKLY_01','128','SLS_BATCH_1','EQMT','2206.250','ti_list_for_ml_20220517_baseline.xlsx')
-    # domain_list = ['EQMT','MGMT','TRANSPORT','SUBMGMT', 'MCAST', 'QOS', 'L2FWD', 'REDUN', 'A2A']
+    # domain_list = ['EQMT','MGMT','TRANSPORT','SUBMGMT', 'MCAST', 'QOS', 'L2FWD', 'REDUN']
     # for each_domain in domain_list:
-    #     validate_ti_reference_by_build('2206.241','ti_list_for_ml_20220517_baseline.xlsx',val_domain=each_domain)
+    #     validate_ti_reference_by_build('2206.241','ti_list_for_ml_20220530_cut.xlsx',val_domain=each_domain)
 
     print("cost %d seconds" % int(time.time() - start_time))
