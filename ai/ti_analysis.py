@@ -1,7 +1,9 @@
 import os,re
+from weakref import ref
 import pandas as pd
 from gensim import corpora, models, similarities
 from jira import JIRA
+import pymysql
 
 LOG_DIR = 'AI_LOG'    #store case logs, ml execl files
 COMP_DIR = 'AI_COMP'    #store ml components
@@ -19,7 +21,7 @@ COMM_STOP_WORD_LIST = ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselve
     'ma', 'mightn', "mightn't", 'shan', "shan't"]
 CUST_STOP_WORD_LIST = ['span','color', 'xmlns','get','filter','rpc-reply','rpc','name','interface','interfaces-state','device-manager',
     'device', 'alarms', 'alarm-list', 'device-specific-data']
-
+# BUG_MAPPING_LIST = []   # [{'TestATCResults_id': '123545' ,'refBugID': 'BBN-00001', 'mappedBugID': 'BBN-00001'}]
 
 def load_ml_model():
     print('Load AI Analysis Model')
@@ -39,12 +41,12 @@ def recommend_ti_by_case(ti_dict, ml_excel, ai_dictionary, ai_lsi, ai_index):
     error_msg = ti_dict['errorInfo']
     res = {
         'ATC_NAME': atc_name,
-        'REF_TI_1': 'None',
-        'REF_TI_2': 'None',
-        'REF_TI_3': 'None',
-        'REC_TI_TYPE': 'None',
-        'REF_BUG_ID': 'None',
-        'REF_BUG_STATUS': 'None'
+        'REF_TI_1': None,
+        'REF_TI_2': None,
+        'REF_TI_3': None,
+        'REC_TI_TYPE': None,
+        'REF_BUG_ID': None,
+        'REF_BUG_STATUS': None
     }
 
     #read ml excel to refer bug type
@@ -197,7 +199,8 @@ def _reference_method_3(sims_list,history_ti_dict,job_name,domain_name,atc_name)
         ref_bug_info = _retrieve_current_bug_info_from_jira(ref_bug_id)
         ref_fix_version = ref_bug_info.get('fix_version')
         ref_bug_status = ref_bug_info.get('bug_status')
-        history_ti_dict[index].update({'FIX_VERSION': ref_fix_version, 'BUG_STATUS': ref_bug_status})
+        ref_fix_build = ref_bug_info.get('fix_build')
+        history_ti_dict[index].update({'FIX_VERSION': ref_fix_version, 'BUG_STATUS': ref_bug_status,'FIX_BUILD':ref_fix_build})
         #adjust socre
         bonus = 0.0
         if atc_name == ref_atc_name:
@@ -243,11 +246,156 @@ def _retrieve_current_bug_info_from_jira(bug_id):
     affects_version = issue.fields.versions[0].name
     labels = issue.fields.labels    # return is a list
     resolution = issue.fields.resolution
+    fix_build = issue.fields.customfield_37027
 
     bug_info_dict.update({'fix_version': fix_version, 'bug_status': bug_status, 'bug_type': bug_type, 'affects_version': affects_version,
-        'labels': labels, 'resolution': resolution})
+        'labels': labels, 'resolution': resolution,'fix_build':fix_build})
 
     return bug_info_dict
 
+def map_bug_to_ti(ref_bug_dict, cs_id, build_id):
+    '''
+    decide the bug id to map according to input
+    return a bug id
+    '''
+    ref_fix_version = ref_bug_dict.get('FIX_VERSION')
+    ref_bug_status = ref_bug_dict.get('BUG_STATUS')
+    ref_fix_build = ref_bug_dict.get('FIX_BUILD')
+    ref_bug_id = ref_bug_dict.get('BUG_ID')
+
+    ref_ti_type = _return_ti_type_by_fix_version(ref_fix_version)
+
+    if ref_bug_status.lower() in ['resolved','closed']:
+        if ref_ti_type == 'ATC':
+            cs_id = cs_id.lower().strip('cs')
+            ref_fix_build = ref_fix_build.lower().strip('cs').split('.')[0] #CS2379.01
+            if int(cs_id) < int(ref_fix_build):
+                print(f'Not raise a new bug, bug id to map: {ref_bug_id}')
+                return ref_bug_id
+            else:
+                new_bug = _raise_bug_in_jira()
+                print(f'Need to raise a new bug, bug id to map: {new_bug}')
+                return new_bug
+        elif ref_ti_type == 'SW':
+            release_id, sub_id = build_id.split('.')
+            ref_release_id, ref_sub_id = ref_fix_build.split('.')
+            if release_id == ref_release_id and int(sub_id) < int(ref_sub_id):
+                print(f'Not raise a new bug, bug id to map: {ref_bug_id}')
+                return ref_bug_id
+            else:
+                new_bug = _raise_bug_in_jira()
+                print(f'Need to raise a new bug, bug id to map: {new_bug}')
+                return new_bug
+    elif ref_bug_status.lower() == 'obsolete':
+        new_bug = _raise_bug_in_jira()
+        print(f'Need to raise a new bug, bug id to map: {new_bug}')
+        return new_bug
+    else:
+        #"open", "in progress", "implemented", etc.
+        if ref_ti_type == 'SW':
+            release_id, sub_id = build_id.split('.')
+            ref_release_id, ref_sub_id = ref_fix_build.split('.')
+            if release_id == ref_release_id:
+                print(f'Not raise a new bug, bug id to map: {ref_bug_id}')
+                return ref_bug_id
+            else:
+                new_bug = _raise_bug_in_jira()
+                print(f'Need to raise a new bug, bug id to map: {new_bug}')
+                return new_bug
+        else:
+            print(f'Not raise a new bug, bug id to map: {ref_bug_id}')
+            return ref_bug_id
+
+def _convert_bug_mapping_list_to_df(bug_mapping_list):
+    df = pd.DataFrame(bug_mapping_list)
+    df.drop_duplicates(subset=['refBugID'],inplace=True)
+    df.reset_index(drop=True,inplace=True)
+    return df
+
+def _get_bug_mapping(df,ref_bug_id):
+    '''
+    check if there is a bug mapped to reference bug id in mapping dict
+    return the mapped new bug id if exist
+    '''
+    mapped_bug_id = None
+    try:
+        mapped_bug_id = df.loc[df['refBugID'] == ref_bug_id, 'mappedBugID'].iloc[0]
+        print(f'Found an existing bug id in DF to map: {mapped_bug_id}')
+    except:
+        pass
+    return mapped_bug_id
+
+def _update_bug_mapping_dataframe(df, id, ref_bug_id, mapped_bug_id):
+    # if not df.empty:
+    #     x = df['refBugID'] == ref_bug_id
+    #     if x.any():
+    #         df.loc[df['refBugID'] == ref_bug_id,'mappedBugID'] = mapped_bug_id
+    #     else:
+    #         tmp_df = pd.DataFrame([[id,ref_bug_id,mapped_bug_id]],columns=['TestATCResults_id','refBugID','mappedBugID'])
+    #         df = df.append(tmp_df, ignore_index=True)
+    # else:
+    #     tmp_df = pd.DataFrame([[id,ref_bug_id,mapped_bug_id]],columns=['TestATCResults_id','refBugID','mappedBugID'])
+    #     df = df.append(tmp_df, ignore_index=True)
+    tmp_df = pd.DataFrame([[id,ref_bug_id,mapped_bug_id]],columns=['TestATCResults_id','refBugID','mappedBugID'])
+    df = df.append(tmp_df, ignore_index=True)
+    return df
+
+def _raise_bug_in_jira():
+    '''
+    raise a bug in jira, return bug id
+    '''
+    return 'BBN-XXXXXX'
+
+
 if __name__ == '__main__':
-    pass
+
+    #below script is to test SLS usage
+    ai_dictionary, ai_lsi, ai_index = load_ml_model()
+
+    job_name = 'LSMF_LMFSA_LANTA_LWLTC_GPON_EONU_WEEKLY_02'
+    job_num = '106'
+    batch_name = 'SLS_BATCH_1'
+    domain_name = 'MGMT'
+    build_id = '2206.267'
+    new_ti_list = []
+
+    connection = pymysql.connect(host='135.249.27.193',
+        user='smtlab',
+        password='smtlab123',
+        database='robot2')
+    
+    with connection:
+        with connection.cursor() as cursor:
+            sql = "SELECT id, jobName, jobNum, batchName,domainName,buildID,ATCName,errorInfo,testCS FROM testATCResults \
+                  WHERE testResult != 'PASS' and jobName = '%s' and jobNum = %s and batchName = '%s' and DomainName = '%s' \
+                  and buildID = %s " %(job_name,job_num,batch_name,domain_name,build_id)
+            try:
+                cursor.execute(sql)
+                new_ti_list = cursor.fetchall()
+            except Exception as inst:
+                print('Error, fail to fetch data from DB due to %s' % inst)
+
+    # BUG_MAPPING_LIST = [{'TestATCResults_id': '123545' ,'refBugID': 'BBN-00001', 'mappedBugID': 'BBN-00001'},
+    #                 {'TestATCResults_id': '123546' ,'refBugID': 'BBN-00002', 'mappedBugID': 'BBN-00003'},
+    #                 {'TestATCResults_id': '123547' ,'refBugID': 'BBN-00002', 'mappedBugID': 'BBN-00003'},
+    #                 ]
+    BUG_MAPPING_LIST = []
+    df_ori = _convert_bug_mapping_list_to_df(BUG_MAPPING_LIST)
+    df_res = pd.DataFrame()
+
+    # print(new_ti_list)
+    for each in new_ti_list:
+        tmp_dict =  dict(zip(['id', 'jobName', 'jobNum', 'batchName','domainName','buildID','ATCName','errorInfo','testCS'],each))
+        # print(tmp_dict)
+        res = recommend_ti_by_case(tmp_dict,'ti_list_for_ml_20220614_training.xlsx',ai_dictionary, ai_lsi, ai_index)
+        print(res['REF_TI_1'])
+
+        if res['REF_BUG_ID']:
+            bug_to_map = _get_bug_mapping(df_ori, res['REF_BUG_ID'])
+            if not bug_to_map:
+                bug_to_map = map_bug_to_ti(res['REF_TI_1'], tmp_dict['testCS'], tmp_dict['buildID'])
+                df_ori = _update_bug_mapping_dataframe(df_ori, tmp_dict['id'] ,res['REF_BUG_ID'], bug_to_map)
+            df_res = _update_bug_mapping_dataframe(df_res, tmp_dict['id'] ,res['REF_BUG_ID'], bug_to_map)
+
+    print(df_ori)
+    print(df_res)

@@ -74,6 +74,8 @@ df.loc[df['FR_ID'] == '111',:]    #返回'FR_ID' 等于111 的所有行
 Name: FR_ID, dtype: bool
 '''
 
+df.loc[df['refBugID'] == 'BBN-00002', 'mappedBugID'].iloc[0] # 取特定列满足某个条件的其他列的值
+
 print(df.loc[(df['Fail_Step'] == 'abc') & (df['Error_Info'] == 'kkk'), :])     #复杂条件查询
 
 #使用函数来查询（也可以使用匿名函数）
@@ -98,7 +100,7 @@ print(df.loc[lambda df: (df.index.str.startswith('test2')) & (df['FR_Type'] == '
 df.at[0,'FR_Type'] = 'SW' #改值
 df.iat[0,2] = 'ATC' #依据位置改值
 df.loc[:,'FR_Type'] = 'ATC' #所有行的某列
-
+df.loc[df['refBugID'] == 'BBN-00002','mappedBugID'] = 'BBN-00004'   # 修改特定行的某列
 
 
 '''
